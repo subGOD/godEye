@@ -1,6 +1,3 @@
-Here’s the full README file with all the details in a single code block. Feel free to copy this directly into your `README.md` file for your `godEye` repository:
-
-```markdown
 <div align="center">
 
 # 👁️ **godEye: The Next-Gen PiVPN Interface** 👁️
@@ -101,5 +98,3 @@ We welcome contributions from developers and enthusiasts! Whether it’s fixing 
 - **Documentation & Support**: Links to additional resources.
 - **Contributing**: Invites others to participate.
 - **Donate Button**: Adds a call to action for supporting the project. 
-
-This layout makes your project’s purpose, setup, and contribution process clear to potential users and contributors. Let me know if you need further customization!
