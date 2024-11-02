@@ -2,72 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Settings, Activity, Network, Users, Shield, Terminal, Menu, LogOut } from 'lucide-react';
 import { AreaChart, Area, PieChart, Pie, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
 
-// Components
-const Login = ({ onLogin }) => {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (username === 'subGOD' && password === 'test') {
-      onLogin(username);
-    } else {
-      setError('Invalid credentials');
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-[#1a1a1a] flex items-center justify-center px-4">
-      <div className="bg-[#242424] p-8 rounded-lg border border-[#333] w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">godEye</h1>
-          <p className="text-gray-400">PiVPN Management Interface</p>
-        </div>
-        
-        {error && (
-          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded text-red-400 text-sm">
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-gray-400 text-sm mb-2">Username</label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="w-full bg-[#333] border border-[#444] rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-              required
-            />
-          </div>
-          
-          <div>
-            <label className="block text-gray-400 text-sm mb-2">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full bg-[#333] border border-[#444] rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-              required
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="w-full bg-blue-500 text-white rounded py-2 hover:bg-blue-600 transition-colors"
-          >
-            Login
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-};
-
 function App() {
-  // State management
+  // Core state management
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [networkData, setNetworkData] = useState([]);
@@ -75,73 +11,359 @@ function App() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [stats, setStats] = useState({
+    totalTraffic: '0 GB',
+    downloadSpeed: '0 Mbps',
+    uploadSpeed: '0 Mbps'
+  });
 
-  // Check for existing session
+  // Authentication check on load
   useEffect(() => {
     const user = localStorage.getItem('user');
     if (user) {
       setIsAuthenticated(true);
+      fetchInitialData();
     }
   }, []);
 
-  // Fetch VPN data
+  // VPN data fetching
+  const fetchInitialData = async () => {
+    try {
+      const response = await fetch('/api/vpn/status');
+      const data = await response.json();
+      if (data.success) {
+        setVpnClients(data.clients);
+        setStats(data.stats);
+        setLoading(false);
+      } else {
+        throw new Error(data.message);
+      }
+    } catch (err) {
+      setError('Unable to connect to PiVPN. Please check your connection.');
+      setLoading(false);
+    }
+  };
+
+  // Real-time network monitoring
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    const fetchVPNData = async () => {
+    const fetchNetworkStats = async () => {
       try {
-        const response = await fetch('http://localhost:3000/api/vpn-status');
+        const response = await fetch('/api/vpn/network');
         const data = await response.json();
-        setVpnClients(data);
-        setLoading(false);
+        if (data.success) {
+          setNetworkData(prev => [...prev.slice(-49), {
+            time: new Date(),
+            up: data.upload,
+            down: data.download
+          }]);
+          setStats(data.stats);
+        }
       } catch (err) {
-        setError('Failed to fetch VPN data');
-        setLoading(false);
+        console.error('Network stats fetch error:', err);
       }
     };
 
-    fetchVPNData();
-    const interval = setInterval(fetchVPNData, 5000); // Refresh every 5 seconds
-
+    const interval = setInterval(fetchNetworkStats, 1000);
     return () => clearInterval(interval);
   }, [isAuthenticated]);
 
-  // Network data monitoring
+  // System logs monitoring
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    const fetchNetworkData = async () => {
-      // Here we'll add real network monitoring data
-      // For now, using mock data
-      const newData = {
-        time: new Date(),
-        up: Math.floor(Math.random() * 20),
-        down: Math.floor(Math.random() * 30)
-      };
-
-      setNetworkData(prev => [...prev.slice(-49), newData]);
+    const fetchLogs = async () => {
+      try {
+        const response = await fetch('/api/vpn/logs');
+        const data = await response.json();
+        if (data.success) {
+          setLogs(data.logs);
+        }
+      } catch (err) {
+        console.error('Log fetch error:', err);
+      }
     };
 
-    const interval = setInterval(fetchNetworkData, 1000);
+    const interval = setInterval(fetchLogs, 5000);
     return () => clearInterval(interval);
   }, [isAuthenticated]);
 
-  const handleLogin = (username) => {
-    setIsAuthenticated(true);
-    localStorage.setItem('user', username);
+  // Authentication handlers
+  const handleLogin = async (username, password) => {
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await response.json();
+      if (data.success) {
+        setIsAuthenticated(true);
+        localStorage.setItem('user', username);
+        localStorage.setItem('token', data.token);
+        fetchInitialData();
+      } else {
+        throw new Error(data.message);
+      }
+    } catch (err) {
+      return { error: err.message };
+    }
   };
 
   const handleLogout = () => {
     setIsAuthenticated(false);
     localStorage.removeItem('user');
+    localStorage.removeItem('token');
+    setVpnClients([]);
+    setNetworkData([]);
+    setLogs([]);
   };
 
-  // Components remain mostly the same, updating ClientList for real data
+  // VPN management functions
+  const addClient = async (clientName) => {
+    try {
+      const response = await fetch('/api/vpn/clients', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ name: clientName })
+      });
+      const data = await response.json();
+      if (data.success) {
+        fetchInitialData();
+        return { success: true, config: data.config };
+      } else {
+        throw new Error(data.message);
+      }
+    } catch (err) {
+      return { error: err.message };
+    }
+  };
+
+  const removeClient = async (clientName) => {
+    try {
+      const response = await fetch(`/api/vpn/clients/${clientName}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      const data = await response.json();
+      if (data.success) {
+        fetchInitialData();
+        return { success: true };
+      } else {
+        throw new Error(data.message);
+      }
+    } catch (err) {
+      return { error: err.message };
+    }
+  };
+// Component: Login
+  const Login = () => {
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [error, setError] = useState('');
+
+    const handleSubmit = async (e) => {
+      e.preventDefault();
+      const result = await handleLogin(username, password);
+      if (result?.error) {
+        setError(result.error);
+      }
+    };
+
+    return (
+      <div className="min-h-screen bg-[#1a1a1a] flex items-center justify-center px-4">
+        <div className="bg-[#242424] p-8 rounded-lg border border-[#333] w-full max-w-md">
+          <div className="text-center mb-8">
+            <h1 className="text-3xl font-bold text-white mb-2">godEye</h1>
+            <p className="text-gray-400">PiVPN Management Interface</p>
+          </div>
+          
+          {error && (
+            <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded text-red-400 text-sm">
+              {error}
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-gray-400 text-sm mb-2">Username</label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="w-full bg-[#333] border border-[#444] rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                required
+              />
+            </div>
+            
+            <div>
+              <label className="block text-gray-400 text-sm mb-2">Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full bg-[#333] border border-[#444] rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                required
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="w-full bg-blue-500 text-white rounded py-2 hover:bg-blue-600 transition-colors"
+            >
+              Login
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  };
+
+  // Component: Header
+  const Header = () => (
+    <div className="h-14 bg-[#242424] border-b border-[#333] flex items-center justify-between px-4 fixed w-full top-0 z-50">
+      <div className="flex items-center gap-3">
+        <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 hover:bg-[#333] rounded-md">
+          <Menu className="h-5 w-5 text-gray-400" />
+        </button>
+        <span className="text-[15px] text-white font-bold">godEye</span>
+      </div>
+      <div className="flex items-center gap-4">
+        <span className="text-white font-medium">Hello, {localStorage.getItem('user')}</span>
+        <span className="text-xs px-3 py-1.5 bg-[#333] rounded text-white">
+          {new Date().toLocaleTimeString()} GMT+2
+        </span>
+        <Network className="h-5 w-5 text-blue-400" />
+        <Settings className="h-5 w-5 text-gray-400" />
+        <button onClick={handleLogout} className="text-red-400 hover:text-red-300">
+          <LogOut className="h-5 w-5" />
+        </button>
+      </div>
+    </div>
+  );
+
+  // Component: Sidebar
+  const Sidebar = () => (
+    <div className={`fixed left-0 top-14 h-[calc(100vh-56px)] w-64 bg-[#242424] border-r border-[#333] transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-64'}`}>
+      <nav className="p-4">
+        <div className="space-y-2">
+          <NavItem icon={Activity} text="Dashboard" active />
+          <NavItem icon={Users} text="Clients" />
+          <NavItem icon={Shield} text="Security" />
+          <NavItem icon={Terminal} text="Console" />
+        </div>
+      </nav>
+    </div>
+  );
+
+  // Component: Navigation Item
+  const NavItem = ({ icon: Icon, text, active }) => (
+    <a
+      href="#"
+      className={`flex items-center gap-3 px-3 py-2 rounded-md transition-colors
+        ${active 
+          ? 'bg-blue-500/10 text-blue-400' 
+          : 'text-gray-400 hover:bg-[#333] hover:text-white'
+        }`}
+    >
+      <Icon className="h-5 w-5" />
+      <span>{text}</span>
+    </a>
+  );
+
+  // Component: Stat Card
+  const StatCard = ({ title, value }) => (
+    <div className="bg-[#242424] rounded-lg p-4 border border-[#333]">
+      <h3 className="text-gray-400 text-sm mb-1">{title}</h3>
+      <p className="text-2xl text-white">{value}</p>
+    </div>
+  );
+
+  // Component: Chart Card
+  const ChartCard = ({ title, chart }) => (
+    <div className="bg-[#242424] rounded-lg p-4 border border-[#333]">
+      <h3 className="text-gray-400 text-sm mb-4">{title}</h3>
+      {chart}
+    </div>
+  );
+
+  // Component: Network Chart
+  const NetworkChart = () => (
+    <ResponsiveContainer width="100%" height={200}>
+      <AreaChart data={networkData}>
+        <XAxis 
+          dataKey="time"
+          tickFormatter={(time) => new Date(time).toLocaleTimeString()}
+          interval={10}
+          stroke="#666"
+        />
+        <YAxis stroke="#666" />
+        <Tooltip
+          labelFormatter={(label) => new Date(label).toLocaleTimeString()}
+          formatter={(value, name) => [`${value} Mbps`, name === 'up' ? 'Upload' : 'Download']}
+          contentStyle={{ backgroundColor: '#242424', border: '1px solid #333' }}
+          itemStyle={{ color: '#fff' }}
+        />
+        <Area 
+          type="monotone" 
+          dataKey="down" 
+          stroke="#4a90e2" 
+          fill="#4a90e2" 
+          fillOpacity={0.1} 
+          name="Download"
+        />
+        <Area 
+          type="monotone" 
+          dataKey="up" 
+          stroke="#ff6b6b" 
+          fill="#ff6b6b" 
+          fillOpacity={0.1} 
+          name="Upload"
+        />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+
+  // Component: Traffic Chart
+  const TrafficChart = () => (
+    <ResponsiveContainer width="100%" height={200}>
+      <PieChart>
+        <Pie
+          data={vpnClients.map(client => ({
+            name: client.name,
+            value: parseFloat(client.bytesTotal),
+            color: `#${Math.floor(Math.random()*16777215).toString(16)}`
+          }))}
+          dataKey="value"
+          cx="50%"
+          cy="50%"
+          innerRadius={60}
+          outerRadius={80}
+          fill="#8884d8"
+        />
+        <Tooltip
+          contentStyle={{ backgroundColor: '#242424', border: '1px solid #333' }}
+          itemStyle={{ color: '#fff' }}
+        />
+      </PieChart>
+    </ResponsiveContainer>
+  );
+
+  // Component: Client List
   const ClientList = () => (
     <div className="bg-[#242424] rounded-lg p-4 border border-[#333]">
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-gray-400 text-sm">Connected Clients</h3>
-        <button className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600">
+        <button 
+          onClick={() => {/* Add client modal logic */}}
+          className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+        >
           Add Client
         </button>
       </div>
@@ -173,7 +395,10 @@ function App() {
                   <td>{client.bytesSent}</td>
                   <td>{client.lastSeen}</td>
                   <td>
-                    <button className="text-red-400 hover:text-red-300">
+                    <button 
+                      onClick={() => removeClient(client.name)}
+                      className="text-red-400 hover:text-red-300"
+                    >
                       Disconnect
                     </button>
                   </td>
@@ -186,8 +411,41 @@ function App() {
     </div>
   );
 
-  // Rest of your components remain the same...
-  // [Previous Header, Sidebar, NavItem, StatCard, ChartCard, NetworkChart, TrafficChart, LogsView components]
+  // Component: Main Content
+  const MainContent = () => (
+    <div className="ml-64 pt-14 pb-16 p-6 bg-[#1a1a1a] min-h-[calc(100vh-56px)]">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <StatCard title="Active Clients" value={vpnClients.length.toString()} />
+        <StatCard title="Total Traffic" value={stats.totalTraffic} />
+        <StatCard title="Download Speed" value={stats.downloadSpeed} />
+        <StatCard title="Upload Speed" value={stats.uploadSpeed} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <ChartCard title="Network Activity" chart={<NetworkChart />} />
+        <ChartCard title="Traffic Distribution" chart={<TrafficChart />} />
+      </div>
+
+      <ClientList />
+    </div>
+  );
+
+  // Component: Footer
+  const Footer = () => (
+    <div className="fixed bottom-0 left-0 right-0 h-12 bg-[#242424] border-t border-[#333] flex items-center justify-center text-sm z-50">
+      <span className="text-gray-400">
+        <span className="font-bold text-white">godEye</span> by{" "}
+        <a 
+          href="https://github.com/subGOD" 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="text-blue-400 hover:text-blue-300 font-medium"
+        >
+          subGOD
+        </a>
+      </span>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-[#1a1a1a] relative">
