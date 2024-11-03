@@ -616,9 +616,10 @@ finalize_installation() {
         echo -e "${GREEN}║             godEye Installation Complete                ║${NC}"
         echo -e "${GREEN}╚════════════════════════════════════════════════════════╝${NC}"
         echo -e "\n${CYAN}Access neural interface at:${NC} http://$IP_ADDRESS:1337"
-        echo -e "\n${CYAN}Authentication credentials:${NC}"
-        echo -e "Username: $ADMIN_USER"
-        echo -e "Password: [REDACTED]"
+        echo -e "\n${CYAN}Default Credentials:${NC}"
+        echo -e "Username: admin"
+        echo -e "Password: godEye2024!"
+        echo -e "\n${RED}IMPORTANT: Change your password after first login!${NC}"
         echo -e "\n${CYAN}Neural command protocols:${NC}"
         echo -e "View logs: ${GRAY}sudo journalctl -u godeye -f${NC}"
         echo -e "View API logs: ${GRAY}sudo journalctl -u godeye-api -f${NC}"
@@ -629,6 +630,7 @@ finalize_installation() {
     fi
 }
 
+# Main execution block
 main() {
     display_banner
     check_system_requirements
@@ -643,4 +645,5 @@ main() {
     finalize_installation
 }
 
+# Start the installation
 main
