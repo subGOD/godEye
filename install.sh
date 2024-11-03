@@ -240,9 +240,9 @@ install_application() {
     
     log "Cloning godEye repository..."
     if [ -d ".git" ]; then
-        git pull origin main >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE"
+        sudo -u godeye git pull origin main >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE"
     else
-        git clone https://github.com/subGOD/godeye.git . >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE"
+        sudo -u godeye git clone https://github.com/subGOD/godeye.git . >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE"
     fi
     
     JWT_SECRET=$(openssl rand -hex 32)
@@ -256,12 +256,21 @@ JWT_SECRET=$JWT_SECRET
 REDIS_PASSWORD=$REDIS_PASSWORD
 NODE_ENV=production
 EOL
+
+    # Set correct ownership
+    chown -R godeye:godeye /opt/godeye
     
     log "Installing Node.js dependencies..."
-    npm ci >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE" || error "Failed to install dependencies" "exit"
+    sudo -u godeye npm install --unsafe-perm >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE" || {
+        cat "$ERROR_LOG_FILE"
+        error "Failed to install dependencies" "exit"
+    }
     
     log "Building application..."
-    npm run build 2>&1 | tee -a "$LOG_FILE" || error "Failed to build application" "exit"
+    sudo -u godeye npm run build 2>&1 | tee -a "$LOG_FILE" || {
+        cat "$LOG_FILE"
+        error "Failed to build application" "exit"
+    }
     
     if [ ! -d "dist" ]; then
         error "Build directory not created. Build failed." "exit"
