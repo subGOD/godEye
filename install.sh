@@ -98,28 +98,26 @@ check_system_requirements() {
 
 # Package management
 install_dependencies() {
-    log "The following packages will be installed:"
-    echo "- nodejs"
-    echo "- npm"
-    echo "- nginx"
-    echo "- git"
-    echo "- redis-server"
-    echo "- ufw"
-    echo "- fail2ban"
-    
-    echo -e "\n${CYAN}Would you like to continue with the installation? [Y/n]${NC}"
-    read -r response
-    
-    if [[ ! "$response" =~ ^[Yy]$ ]] && [ ! -z "$response" ]; then
-        error "Installation cancelled by user" "exit"
-    fi
-    
     log "Installing required packages..."
-    apt-get update -qq || error "Failed to update package list" "exit"
     
+    # Update system first
+    log "Updating system packages..."
+    apt-get update -y || error "Failed to update package list" "exit"
+
+    # Install curl if not present (needed for Node.js installation)
+    if ! command -v curl &> /dev/null; then
+        apt-get install -y curl || error "Failed to install curl" "exit"
+    fi
+
+    # Add Node.js repository and install Node.js properly
+    log "Setting up Node.js repository..."
+    curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - || error "Failed to setup Node.js repository" "exit"
+    
+    log "Installing Node.js and npm..."
+    apt-get install -y nodejs || error "Failed to install Node.js and npm" "exit"
+
+    # Install other required packages
     PACKAGES=(
-        "nodejs"
-        "npm"
         "nginx"
         "git"
         "redis-server"
@@ -138,15 +136,18 @@ install_dependencies() {
         fi
     done
     
-    # Check nodejs version
-    NODE_VERSION=$(node -v | cut -d'v' -f2)
-    if [ "$(printf '%s\n' "14.0.0" "$NODE_VERSION" | sort -V | head -n1)" = "14.0.0" ]; then
-        log "Node.js version is sufficient: $NODE_VERSION"
-    else
-        log "Upgrading Node.js..."
-        curl -fsSL https://deb.nodesource.com/setup_16.x | bash -
-        apt-get install -y nodejs
+    # Verify Node.js and npm installation
+    if ! command -v node &> /dev/null; then
+        error "Node.js installation failed" "exit"
     fi
+    
+    if ! command -v npm &> /dev/null; then
+        error "npm installation failed" "exit"
+    fi
+
+    # Display versions for verification
+    log "Node.js version: $(node -v)"
+    log "npm version: $(npm -v)"
     
     success "All dependencies installed successfully"
 }
