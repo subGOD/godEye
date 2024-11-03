@@ -7,7 +7,7 @@ BLUE='\e[34m'
 CYAN='\e[38;5;123m'
 GRAY='\e[90m'
 YELLOW='\e[33m'
-NC='\e[0m' # No Color
+NC='\e[0m'
 CHECK_MARK="\u2714"
 PROCESSING_MARK="⟳"
 
@@ -40,10 +40,15 @@ success() {
     echo -e "${GREEN}[SUCCESS]${NC} $1 ${GREEN}${CHECK_MARK}${NC}"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUCCESS] $1" >> "$LOG_FILE"
 }
+
+# Initialize log files
+sudo touch "$LOG_FILE" "$ERROR_LOG_FILE"
+sudo chmod 644 "$LOG_FILE" "$ERROR_LOG_FILE"
+
+log "Installation started at $(date '+%Y-%m-%d %H:%M:%S')"
 # Clear screen and show banner
 clear
 
-# Display ASCII art banner with Matrix-style animation
 display_banner() {
     echo -e "${CYAN}"
     local banner=(
@@ -74,7 +79,6 @@ display_banner() {
     echo -e "\n                        ${CYAN}PiVPN Management Interface"
     echo -e "                        Version: 1.0.0 | By: subGOD${NC}\n"
 
-    # Matrix-style confirmation
     echo -e "${GREEN}[SYSTEM]: Neural interface detected...${NC}"
     sleep 0.5
     echo -e "${CYAN}[CORE]: Initializing neural handshake...${NC}"
@@ -87,13 +91,6 @@ display_banner() {
     sleep 1
 }
 
-# Initialize log files
-sudo touch "$LOG_FILE" "$ERROR_LOG_FILE"
-sudo chmod 644 "$LOG_FILE" "$ERROR_LOG_FILE"
-
-log "Installation started at $(date '+%Y-%m-%d %H:%M:%S')"
-
-# System requirements check
 check_system_requirements() {
     log "Checking system requirements..."
     echo -e "${CYAN}[CORE]: Analyzing system compatibility...${NC}"
@@ -120,10 +117,9 @@ check_system_requirements() {
     if ! command -v pivpn &> /dev/null; then
         error "PiVPN not found. Please install PiVPN first." "exit"
     fi
-    
+
     success "System requirements verified"
 }
-# Package management
 install_dependencies() {
     log "Installing required packages..."
     echo -e "${CYAN}[CORE]: Downloading neural enhancement modules...${NC}"
@@ -160,11 +156,10 @@ install_dependencies() {
         fi
     done
 
-    # Install required npm packages globally
-    npm install -g bcrypt vite >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE" || {
-        error "Failed to install global npm packages" "exit"
-    }
-    
+    # Install development tools
+    apt-get install -y python3 make g++ || error "Failed to install development tools" "exit"
+
+    # Verify installations
     if ! command -v node &> /dev/null; then
         error "Node.js installation failed" "exit"
     fi
@@ -176,10 +171,40 @@ install_dependencies() {
     log "Node.js version: $(node -v)"
     log "npm version: $(npm -v)"
     
+    # Install global npm packages
+    npm install -g npm@latest || error "Failed to update npm" "exit"
+    npm install -g node-gyp || error "Failed to install node-gyp" "exit"
+    
     success "Neural enhancement modules installed"
 }
 
-# Create admin credentials
+setup_system_user() {
+    log "Creating system user and setting permissions..."
+    echo -e "${CYAN}[CORE]: Configuring neural interface permissions...${NC}"
+    show_progress 2
+    
+    if ! id "godeye" &>/dev/null; then
+        useradd -r -s /bin/false godeye || error "Failed to create godeye user" "exit"
+        usermod -aG sudo godeye
+    fi
+    
+    # Create and set permissions for directories
+    rm -rf /opt/godeye
+    mkdir -p /opt/godeye
+    mkdir -p /var/log/godeye
+    
+    chown -R godeye:godeye /opt/godeye
+    chown -R godeye:godeye /var/log/godeye
+    chmod -R 755 /opt/godeye
+    chmod -R 644 /var/log/godeye
+
+    # Create npm configuration directory for godeye user
+    mkdir -p /home/godeye/.npm
+    chown -R godeye:godeye /home/godeye
+    
+    success "Neural interface permissions configured"
+}
+
 create_admin_credentials() {
     echo -e "\n${CYAN}[CORE]: Initializing administrator neural implant...${NC}"
     echo -e "${YELLOW}[ALERT]: Security protocols require authentication setup${NC}\n"
@@ -204,70 +229,108 @@ create_admin_credentials() {
         fi
     done
     
-    HASHED_PASSWORD=$(node -e "const bcrypt = require('bcrypt'); console.log(bcrypt.hashSync('$ADMIN_PASS', 10))")
-    
     success "Administrator neural implant configured"
 }
-# Create system user
-setup_system_user() {
-    log "Creating system user and setting permissions..."
-    echo -e "${CYAN}[CORE]: Configuring neural interface permissions...${NC}"
-    show_progress 2
-    
-    if ! id "godeye" &>/dev/null; then
-        useradd -r -s /bin/false godeye || error "Failed to create godeye user" "exit"
-        usermod -aG sudo godeye
-    fi
-    
-    mkdir -p /opt/godeye
-    mkdir -p /var/log/godeye
-    
-    chown -R godeye:godeye /opt/godeye
-    chown -R godeye:godeye /var/log/godeye
-    chmod -R 755 /opt/godeye
-    chmod -R 644 /var/log/godeye
-    
-    success "Neural interface permissions configured"
-}
-
-# Application installation
 install_application() {
     log "Installing godEye application..."
     echo -e "${CYAN}[CORE]: Integrating neural matrix components...${NC}"
-    show_progress 8
     
+    # Clean and prepare directory
+    rm -rf /opt/godeye/*
     cd /opt/godeye || error "Failed to access installation directory" "exit"
     
+    # Initialize npm project
+    log "Initializing npm project..."
+    cat > package.json << EOL
+{
+  "name": "godeye",
+  "version": "1.0.0",
+  "description": "PiVPN Management Interface",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --host --port 3000"
+  },
+  "dependencies": {
+    "@heroicons/react": "^2.0.18",
+    "axios": "^1.6.0",
+    "bcryptjs": "^2.4.3",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.292.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "recharts": "^2.9.0",
+    "redis": "^4.6.10"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.15",
+    "@types/react-dom": "^18.2.7",
+    "@vitejs/plugin-react": "^4.0.3",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.31",
+    "tailwindcss": "^3.3.5",
+    "vite": "^4.4.5"
+  }
+}
+EOL
+
+    # Create npm config
+    cat > .npmrc << EOL
+unsafe-perm=true
+legacy-peer-deps=true
+EOL
+
+    # Set correct permissions
+    chown -R godeye:godeye /opt/godeye
+    chmod -R 755 /opt/godeye
+
+    # Install dependencies
+    log "Installing Node.js dependencies..."
+    npm install --no-audit --no-fund >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE" || {
+        cat "$ERROR_LOG_FILE"
+        error "Failed to install dependencies" "exit"
+    }
+
     log "Cloning godEye repository..."
-    if [ -d ".git" ]; then
-        sudo -u godeye git pull origin main >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE"
-    else
-        sudo -u godeye git clone https://github.com/subGOD/godeye.git . >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE"
-    fi
-    
+    git clone https://github.com/subGOD/godeye.git temp >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE"
+    cp -r temp/* . && rm -rf temp
+
+    # Create environment file
     JWT_SECRET=$(openssl rand -hex 32)
     REDIS_PASSWORD=$(openssl rand -hex 24)
     
     cat > .env << EOL
 VITE_ADMIN_USERNAME=$ADMIN_USER
-VITE_ADMIN_PASSWORD=$HASHED_PASSWORD
+VITE_ADMIN_PASSWORD=$ADMIN_PASS
 VITE_WIREGUARD_PORT=$WG_PORT
 JWT_SECRET=$JWT_SECRET
 REDIS_PASSWORD=$REDIS_PASSWORD
 NODE_ENV=production
 EOL
 
-    # Set correct ownership
-    chown -R godeye:godeye /opt/godeye
-    
-    log "Installing Node.js dependencies..."
-    sudo -u godeye npm install --unsafe-perm >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE" || {
-        cat "$ERROR_LOG_FILE"
-        error "Failed to install dependencies" "exit"
-    }
-    
+    # Create Vite config
+    cat > vite.config.js << EOL
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    host: true,
+    port: 3000
+  },
+  build: {
+    outDir: 'dist',
+    chunkSizeWarningLimit: 1000
+  }
+})
+EOL
+
     log "Building application..."
-    sudo -u godeye npm run build 2>&1 | tee -a "$LOG_FILE" || {
+    npm run build 2>&1 | tee -a "$LOG_FILE" || {
         cat "$LOG_FILE"
         error "Failed to build application" "exit"
     }
@@ -275,28 +338,13 @@ EOL
     if [ ! -d "dist" ]; then
         error "Build directory not created. Build failed." "exit"
     fi
+
+    # Final permission adjustment
+    chown -R godeye:godeye /opt/godeye
+    chmod -R 755 /opt/godeye
     
     success "Neural matrix components integrated"
 }
-
-# Initialize admin user in Redis
-initialize_admin_user() {
-    log "Initializing admin user in Redis..."
-    echo -e "${CYAN}[CORE]: Creating neural authentication patterns...${NC}"
-    show_progress 3
-    
-    redis-cli -a "$REDIS_PASSWORD" << EOF
-    HMSET user:$ADMIN_USER username "$ADMIN_USER" password "$HASHED_PASSWORD" role "admin"
-    SADD users $ADMIN_USER
-EOF
-    
-    if [ $? -eq 0 ]; then
-        success "Neural authentication patterns established"
-    else
-        error "Failed to initialize admin user" "exit"
-    fi
-}
-# Configure services
 configure_services() {
     log "Configuring system services..."
     echo -e "${CYAN}[CORE]: Establishing neural network protocols...${NC}"
@@ -305,6 +353,11 @@ configure_services() {
     log "Configuring Redis..."
     sed -i "s/# requirepass foobared/requirepass $REDIS_PASSWORD/" /etc/redis/redis.conf
     systemctl restart redis-server
+
+    # Create log directories with correct permissions
+    mkdir -p /var/log/godeye
+    chown -R godeye:godeye /var/log/godeye
+    chmod -R 755 /var/log/godeye
     
     cat > /etc/systemd/system/godeye-api.service << EOL
 [Unit]
@@ -316,9 +369,11 @@ Wants=redis-server.service
 Type=simple
 User=godeye
 WorkingDirectory=/opt/godeye
+Environment=NODE_ENV=production
+Environment=PORT=3001
 ExecStart=/usr/bin/node server.js
 Restart=always
-Environment=NODE_ENV=production
+RestartSec=10
 StandardOutput=append:/var/log/godeye/api.log
 StandardError=append:/var/log/godeye/api-error.log
 
@@ -336,9 +391,10 @@ Wants=godeye-api.service
 Type=simple
 User=godeye
 WorkingDirectory=/opt/godeye
-ExecStart=/usr/bin/npm run preview -- --host --port 3000
-Restart=always
 Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm run preview -- --port 3000
+Restart=always
+RestartSec=10
 StandardOutput=append:/var/log/godeye/frontend.log
 StandardError=append:/var/log/godeye/frontend-error.log
 
@@ -349,8 +405,18 @@ EOL
     log "Configuring Nginx..."
     cat > /etc/nginx/sites-available/godeye << EOL
 server {
-    listen 1337;
+    listen 1337 default_server;
     server_name _;
+
+    client_max_body_size 50M;
+    
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer-when-downgrade" always;
+    add_header Content-Security-Policy "default-src 'self' http: https: data: blob: 'unsafe-inline'" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
     location / {
         proxy_pass http://localhost:3000;
@@ -359,10 +425,15 @@ server {
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
         proxy_cache_bypass \$http_upgrade;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
         
-        add_header 'Access-Control-Allow-Origin' '*';
-        add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS';
-        add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization';
+        # CORS headers
+        add_header 'Access-Control-Allow-Origin' '*' always;
+        add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS, PUT, DELETE' always;
+        add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization' always;
+        add_header 'Access-Control-Expose-Headers' 'Content-Length,Content-Range' always;
     }
 
     location /api {
@@ -372,6 +443,16 @@ server {
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
         proxy_cache_bypass \$http_upgrade;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location /socket.io {
+        proxy_pass http://localhost:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
     }
 }
 EOL
@@ -383,8 +464,6 @@ EOL
     
     success "Neural network protocols established"
 }
-
-# Configure security
 setup_security() {
     log "Configuring security measures..."
     echo -e "${CYAN}[CORE]: Deploying neural defense systems...${NC}"
@@ -427,9 +506,13 @@ EOL
     
     systemctl restart fail2ban
     
+    # Set secure permissions on sensitive files
+    chmod 600 /opt/godeye/.env
+    chmod 600 /opt/godeye/.npmrc
+    
     success "Neural defense systems activated"
 }
-# Start services
+
 start_services() {
     log "Starting services..."
     echo -e "${CYAN}[CORE]: Activating neural interface services...${NC}"
@@ -452,7 +535,6 @@ start_services() {
     success "Neural interface services activated"
 }
 
-# Detect WireGuard port
 detect_wireguard_port() {
     log "Detecting WireGuard configuration..."
     echo -e "${CYAN}[CORE]: Scanning for quantum tunneling protocols...${NC}"
@@ -467,7 +549,6 @@ detect_wireguard_port() {
     fi
 }
 
-# Final setup and checks
 finalize_installation() {
     log "Performing final checks..."
     echo -e "${CYAN}[CORE]: Verifying neural interface stability...${NC}"
@@ -495,7 +576,6 @@ finalize_installation() {
     fi
 }
 
-# Main installation sequence
 main() {
     display_banner
     check_system_requirements
@@ -507,9 +587,7 @@ main() {
     configure_services
     setup_security
     start_services
-    initialize_admin_user
     finalize_installation
 }
 
-# Start installation
 main
