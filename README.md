@@ -28,10 +28,11 @@
 **godEye** leverages a robust tech stack to deliver a high-performance, user-friendly experience:
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Frontend-Vite-informational?style=flat&logo=vite&logoColor=white&color=2bbc8a"/>
-  <img src="https://img.shields.io/badge/UI-TailwindCSS-informational?style=flat&logo=tailwindcss&logoColor=white&color=2bbc8a"/>
+  <img src="https://img.shields.io/badge/Frontend-React-informational?style=flat&logo=react&logoColor=white&color=2bbc8a"/>
+  <img src="https://img.shields.io/badge/Navigation-React%20Router-informational?style=flat&logo=react-router&logoColor=white&color=2bbc8a"/>
+  <img src="https://img.shields.io/badge/HTTP-Axios-informational?style=flat&logo=axios&logoColor=white&color=2bbc8a"/>
+  <img src="https://img.shields.io/badge/Styling-Tailwind%20CSS-informational?style=flat&logo=tailwindcss&logoColor=white&color=2bbc8a"/>
   <img src="https://img.shields.io/badge/Backend-Node.js-informational?style=flat&logo=node.js&logoColor=white&color=2bbc8a"/>
-  <img src="https://img.shields.io/badge/Language-JavaScript-informational?style=flat&logo=javascript&logoColor=white&color=2bbc8a"/>
   <img src="https://img.shields.io/badge/Platform-Raspberry%20Pi-informational?style=flat&logo=raspberry-pi&logoColor=white&color=2bbc8a"/>
 </p>
 
@@ -57,11 +58,11 @@ curl -L https://github.com/subGOD/godEye/install.sh | bash
 
 ---
 
-## 📸 **Screenshots**
+## 📸 **Screenshots & Demos**
 
 <div align="center">
-  <img src="https://github.com/subGOD/godEye/screenshots/dashboard.png" width="80%" alt="godEye Dashboard"/>
-  <p><i>Experience a powerful and streamlined UI for managing your PiVPN.</i></p>
+  <img src="https://github.com/Anmol-Baranwal/Cool-GIFs-For-GitHub/blob/main/gifs/code.gif" width="50%" alt="godEye Code Overview"/>
+  <p><i>Experience the power and simplicity of godEye’s user interface.</i></p>
 </div>
 
 ---
@@ -87,14 +88,3 @@ We welcome contributions from developers and enthusiasts! Whether it’s fixing 
 [![Donate](https://img.shields.io/badge/Donate-PayPal-blue.svg)](https://www.paypal.com/donate/?hosted_button_id=N7FA5MUMC2W7L)
 
 </div>
-```
-
-### Summary
-
-- **About godEye**: Explains the purpose of the project.
-- **Tech Stack & Features**: Highlights the technologies used and the core features.
-- **Installation**: Provides a quick-start guide.
-- **Screenshots**: Includes a placeholder for visuals of the interface.
-- **Documentation & Support**: Links to additional resources.
-- **Contributing**: Invites others to participate.
-- **Donate Button**: Adds a call to action for supporting the project. 
