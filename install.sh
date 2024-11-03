@@ -40,7 +40,6 @@ success() {
     echo -e "${GREEN}[SUCCESS]${NC} $1 ${GREEN}${CHECK_MARK}${NC}"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUCCESS] $1" >> "$LOG_FILE"
 }
-
 # Clear screen and show banner
 clear
 
@@ -87,6 +86,7 @@ display_banner() {
     echo -e "\n${CYAN}[CORE]: Beginning installation sequence...${NC}\n"
     sleep 1
 }
+
 # Initialize log files
 sudo touch "$LOG_FILE" "$ERROR_LOG_FILE"
 sudo chmod 644 "$LOG_FILE" "$ERROR_LOG_FILE"
@@ -98,38 +98,88 @@ check_system_requirements() {
     log "Checking system requirements..."
     echo -e "${CYAN}[CORE]: Analyzing system compatibility...${NC}"
     
-    # Check if running as root
     if [ "$EUID" -ne 0 ]; then 
         error "Please run as root or with sudo" "exit"
     fi
 
-    # Check system architecture
     ARCH=$(uname -m)
     if [[ ! "$ARCH" =~ ^(aarch64|arm64|armv7l)$ ]]; then
         error "Unsupported architecture: $ARCH. This script is designed for Raspberry Pi." "exit"
     fi
 
-    # Check for minimum RAM (1GB)
     TOTAL_RAM=$(free -m | awk '/^Mem:/{print $2}')
     if [ "$TOTAL_RAM" -lt 1024 ]; then
         error "Insufficient RAM. Minimum 1GB required." "exit"
     fi
 
-    # Check available disk space (minimum 1GB)
     AVAILABLE_SPACE=$(df -m /opt | awk 'NR==2 {print $4}')
     if [ "$AVAILABLE_SPACE" -lt 1024 ]; then
         error "Insufficient disk space. Minimum 1GB required." "exit"
     fi
 
-    # Check for PiVPN
     if ! command -v pivpn &> /dev/null; then
         error "PiVPN not found. Please install PiVPN first." "exit"
     fi
     
     success "System requirements verified"
 }
+# Package management
+install_dependencies() {
+    log "Installing required packages..."
+    echo -e "${CYAN}[CORE]: Downloading neural enhancement modules...${NC}"
+    
+    log "Updating system packages..."
+    apt-get update -y || error "Failed to update package list" "exit"
 
-# Function to create admin credentials
+    if ! command -v curl &> /dev/null; then
+        apt-get install -y curl || error "Failed to install curl" "exit"
+    fi
+
+    log "Setting up Node.js repository..."
+    curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - || error "Failed to setup Node.js repository" "exit"
+    
+    log "Installing Node.js and npm..."
+    apt-get install -y nodejs build-essential || error "Failed to install Node.js and npm" "exit"
+
+    PACKAGES=(
+        "nginx"
+        "git"
+        "redis-server"
+        "ufw"
+        "fail2ban"
+    )
+    
+    for package in "${PACKAGES[@]}"; do
+        if ! dpkg -l | grep -q "^ii  $package"; then
+            log "Installing $package..."
+            apt-get install -y "$package" >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE" || {
+                error "Failed to install $package" "exit"
+            }
+        else
+            log "$package is already installed"
+        fi
+    done
+
+    # Install required npm packages globally
+    npm install -g bcrypt vite >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE" || {
+        error "Failed to install global npm packages" "exit"
+    }
+    
+    if ! command -v node &> /dev/null; then
+        error "Node.js installation failed" "exit"
+    fi
+    
+    if ! command -v npm &> /dev/null; then
+        error "npm installation failed" "exit"
+    fi
+
+    log "Node.js version: $(node -v)"
+    log "npm version: $(npm -v)"
+    
+    success "Neural enhancement modules installed"
+}
+
+# Create admin credentials
 create_admin_credentials() {
     echo -e "\n${CYAN}[CORE]: Initializing administrator neural implant...${NC}"
     echo -e "${YELLOW}[ALERT]: Security protocols require authentication setup${NC}\n"
@@ -154,73 +204,10 @@ create_admin_credentials() {
         fi
     done
     
-    # Hash the password using bcrypt (requires nodejs)
     HASHED_PASSWORD=$(node -e "const bcrypt = require('bcrypt'); console.log(bcrypt.hashSync('$ADMIN_PASS', 10))")
     
     success "Administrator neural implant configured"
 }
-# Package management
-install_dependencies() {
-    log "Installing required packages..."
-    echo -e "${CYAN}[CORE]: Downloading neural enhancement modules...${NC}"
-    
-    # Update system first
-    log "Updating system packages..."
-    apt-get update -y || error "Failed to update package list" "exit"
-
-    # Update system first
-    log "Updating system packages..."
-    apt-get update -y || error "Failed to update package list" "exit"
-
-    # Install curl if not present (needed for Node.js installation)
-    if ! command -v curl &> /dev/null; then
-        apt-get install -y curl || error "Failed to install curl" "exit"
-    fi
-
-    # Add Node.js repository and install Node.js properly
-    log "Setting up Node.js repository..."
-    curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - || error "Failed to setup Node.js repository" "exit"
-    
-    log "Installing Node.js and npm..."
-    apt-get install -y nodejs || error "Failed to install Node.js and npm" "exit"
-
-    # Install other required packages
-    PACKAGES=(
-        "nginx"
-        "git"
-        "redis-server"
-        "ufw"
-        "fail2ban"
-        "bcrypt"
-    )
-    
-    for package in "${PACKAGES[@]}"; do
-        if ! dpkg -l | grep -q "^ii  $package"; then
-            log "Installing $package..."
-            apt-get install -y "$package" >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE" || {
-                error "Failed to install $package" "exit"
-            }
-        else
-            log "$package is already installed"
-        fi
-    done
-    
-    # Verify Node.js and npm installation
-    if ! command -v node &> /dev/null; then
-        error "Node.js installation failed" "exit"
-    fi
-    
-    if ! command -v npm &> /dev/null; then
-        error "npm installation failed" "exit"
-    fi
-
-    # Display versions for verification
-    log "Node.js version: $(node -v)"
-    log "npm version: $(npm -v)"
-    
-    success "Neural enhancement modules installed"
-}
-
 # Create system user
 setup_system_user() {
     log "Creating system user and setting permissions..."
@@ -242,6 +229,7 @@ setup_system_user() {
     
     success "Neural interface permissions configured"
 }
+
 # Application installation
 install_application() {
     log "Installing godEye application..."
@@ -262,7 +250,7 @@ install_application() {
     
     cat > .env << EOL
 VITE_ADMIN_USERNAME=$ADMIN_USER
-VITE_ADMIN_PASSWORD=$ADMIN_PASS
+VITE_ADMIN_PASSWORD=$HASHED_PASSWORD
 VITE_WIREGUARD_PORT=$WG_PORT
 JWT_SECRET=$JWT_SECRET
 REDIS_PASSWORD=$REDIS_PASSWORD
@@ -270,17 +258,11 @@ NODE_ENV=production
 EOL
     
     log "Installing Node.js dependencies..."
-    # Install vite globally first
-    npm install -g vite >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE" || error "Failed to install vite" "exit"
-    
-    # Install all dependencies (including dev dependencies needed for build)
     npm ci >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE" || error "Failed to install dependencies" "exit"
     
     log "Building application..."
-    # Show more detailed build output
     npm run build 2>&1 | tee -a "$LOG_FILE" || error "Failed to build application" "exit"
     
-    # Check if build directory exists
     if [ ! -d "dist" ]; then
         error "Build directory not created. Build failed." "exit"
     fi
@@ -294,7 +276,6 @@ initialize_admin_user() {
     echo -e "${CYAN}[CORE]: Creating neural authentication patterns...${NC}"
     show_progress 3
     
-    # Connect to Redis and set the admin user
     redis-cli -a "$REDIS_PASSWORD" << EOF
     HMSET user:$ADMIN_USER username "$ADMIN_USER" password "$HASHED_PASSWORD" role "admin"
     SADD users $ADMIN_USER
@@ -393,6 +374,7 @@ EOL
     
     success "Neural network protocols established"
 }
+
 # Configure security
 setup_security() {
     log "Configuring security measures..."
@@ -438,7 +420,6 @@ EOL
     
     success "Neural defense systems activated"
 }
-
 # Start services
 start_services() {
     log "Starting services..."
@@ -476,6 +457,7 @@ detect_wireguard_port() {
         error "WireGuard configuration not found." "exit"
     fi
 }
+
 # Final setup and checks
 finalize_installation() {
     log "Performing final checks..."
