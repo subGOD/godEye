@@ -6,11 +6,44 @@ GREEN='\e[32m'
 BLUE='\e[34m'
 CYAN='\e[38;5;123m'
 GRAY='\e[90m'
+YELLOW='\e[33m'
 NC='\e[0m' # No Color
+CHECK_MARK="\u2714"
+PROCESSING_MARK="⟳"
 
 # Logging setup
 LOG_FILE="/var/log/godeye_install.log"
 ERROR_LOG_FILE="/var/log/godeye_error.log"
+
+# Progress bar function
+show_progress() {
+    local duration=$1
+    local step=0.02
+    local progress=0
+    local bar_width=40
+    local spin_chars='⣾⣽⣻⢿⡿⣟⣯⣷'
+    local start_time=$(date +%s)
+
+    printf "\n"
+    while [ $progress -le 100 ]; do
+        local current_time=$(date +%s)
+        local elapsed=$((current_time - start_time))
+        progress=$((elapsed * 100 / duration))
+        [ $progress -gt 100 ] && progress=100
+
+        local filled=$((progress * bar_width / 100))
+        local empty=$((bar_width - filled))
+        local spin_char="${spin_chars:$(( (elapsed / 1) % 8 )):1}"
+
+        printf "\r${CYAN}[${NC}"
+        printf "%${filled}s" '' | tr ' ' '█'
+        printf "%${empty}s" '' | tr ' ' '░'
+        printf "${CYAN}]${NC} ${spin_char} ${progress}%%"
+        
+        sleep $step
+    done
+    printf "\n"
+}
 
 # Function definitions
 log() {
@@ -27,45 +60,67 @@ error() {
 }
 
 success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    echo -e "${GREEN}[SUCCESS]${NC} $1 ${GREEN}${CHECK_MARK}${NC}"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUCCESS] $1" >> "$LOG_FILE"
 }
 
 # Clear screen and show banner
 clear
 
-# Display ASCII art banner
-echo -e "${CYAN}
-╔═══════════════════════[NEURAL_INTERFACE_INITIALIZATION]═══════════════════════╗
-║ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  ║
-║ ▓                                                                          ▓  ║
-║ ▓      ▄████  ▒█████  ▓█████▄    ▓█████▓██   ██▓▓█████                   ▓  ║
-║ ▓     ██▒ ▀█▒██▒  ██▒▒██▀ ██▌   ▓█   ▀ ▒██  ██▒▓█   ▀                   ▓  ║
-║ ▓    ▒██░▄▄▄▒██░  ██▒░██   █▌   ▒███   ▒██ ██░▒███                      ▓  ║
-║ ▓    ░▓█  ██▓██   ██░░▓█▄   ▌   ▒▓█  ▄ ░ ▐██▓░▒▓█  ▄                    ▓  ║
-║ ▓    ░▒▓███▀▒░ ████▓▒░░▒████▓    ░▒████▒░ ██▒▓░░▒████▒                   ▓  ║
-║ ▓         ┌──────────────[NEURAL_LINK_ACTIVE]──────────────┐              ▓  ║
-║ ▓         │    CORE.SYS         │     MATRIX.protocol      │              ▓  ║
-║ ▓         │    ┌──────┐         │     ╔══════════╗        │              ▓  ║
-║ ▓         │    │⚡CPU⚡│         │     ║ ▓▓▒▒░░▓▓ ║        │              ▓  ║
-║ ▓         │    └──────┘         │     ║ ░░▒▒▓▓░░ ║        │              ▓  ║
-║ ▓         │                     │     ╚══════════╝        │              ▓  ║
-║ ▓         └─────────────────────────────────────────────────              ▓  ║
-║ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  ║
-╚═════════════════════[INSTALLATION_SEQUENCE_INITIATED]════════════════════════╝${NC}
+# Display ASCII art banner with Matrix-style animation
+display_banner() {
+    echo -e "${CYAN}"
+    local banner=(
+        "╔═══════════════════════[NEURAL_INTERFACE_INITIALIZATION]═══════════════════════╗"
+        "║ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  ║"
+        "║ ▓                                                                          ▓  ║"
+        "║ ▓      ▄████  ▒█████  ▓█████▄    ▓█████▓██   ██▓▓█████                   ▓  ║"
+        "║ ▓     ██▒ ▀█▒██▒  ██▒▒██▀ ██▌   ▓█   ▀ ▒██  ██▒▓█   ▀                   ▓  ║"
+        "║ ▓    ▒██░▄▄▄▒██░  ██▒░██   █▌   ▒███   ▒██ ██░▒███                      ▓  ║"
+        "║ ▓    ░▓█  ██▓██   ██░░▓█▄   ▌   ▒▓█  ▄ ░ ▐██▓░▒▓█  ▄                    ▓  ║"
+        "║ ▓    ░▒▓███▀▒░ ████▓▒░░▒████▓    ░▒████▒░ ██▒▓░░▒████▒                   ▓  ║"
+        "║ ▓         ┌──────────────[NEURAL_LINK_ACTIVE]──────────────┐              ▓  ║"
+        "║ ▓         │    CORE.SYS         │     MATRIX.protocol      │              ▓  ║"
+        "║ ▓         │    ┌──────┐         │     ╔══════════╗        │              ▓  ║"
+        "║ ▓         │    │⚡CPU⚡│         │     ║ ▓▓▒▒░░▓▓ ║        │              ▓  ║"
+        "║ ▓         │    └──────┘         │     ║ ░░▒▒▓▓░░ ║        │              ▓  ║"
+        "║ ▓         │                     │     ╚══════════╝        │              ▓  ║"
+        "║ ▓         └─────────────────────────────────────────────────              ▓  ║"
+        "║ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  ║"
+        "╚═════════════════════[INSTALLATION_SEQUENCE_INITIATED]════════════════════════╝"
+    )
 
-                        PiVPN Management Interface
-                        Version: 1.0.0 | By: subGOD
-"
+    for ((i=0; i<${#banner[@]}; i++)); do
+        echo -e "${banner[$i]}"
+        sleep 0.05
+    done
+    echo -e "${NC}"
+    echo -e "\n                        ${CYAN}PiVPN Management Interface"
+    echo -e "                        Version: 1.0.0 | By: subGOD${NC}\n"
 
+    # Matrix-style confirmation
+    echo -e "${GREEN}[SYSTEM]: Neural interface detected...${NC}"
+    sleep 0.5
+    echo -e "${CYAN}[CORE]: Initializing neural handshake...${NC}"
+    sleep 0.5
+    echo -e "${YELLOW}[ALERT]: Bio-digital patterns synchronized${NC}"
+    sleep 0.5
+    echo -e "${GREEN}[SYSTEM]: Connection established to the Matrix${NC}"
+    sleep 0.5
+    echo -e "\n${CYAN}[CORE]: Beginning installation sequence...${NC}\n"
+    sleep 1
+}
 # Initialize log files
 sudo touch "$LOG_FILE" "$ERROR_LOG_FILE"
 sudo chmod 644 "$LOG_FILE" "$ERROR_LOG_FILE"
 
 log "Installation started at $(date '+%Y-%m-%d %H:%M:%S')"
+
 # System requirements check
 check_system_requirements() {
     log "Checking system requirements..."
+    echo -e "${CYAN}[CORE]: Analyzing system compatibility...${NC}"
+    show_progress 3
     
     # Check if running as root
     if [ "$EUID" -ne 0 ]; then 
@@ -94,11 +149,45 @@ check_system_requirements() {
     if ! command -v pivpn &> /dev/null; then
         error "PiVPN not found. Please install PiVPN first." "exit"
     fi
+    
+    success "System requirements verified"
 }
 
+# Function to create admin credentials
+create_admin_credentials() {
+    echo -e "\n${CYAN}[CORE]: Initializing administrator neural implant...${NC}"
+    echo -e "${YELLOW}[ALERT]: Security protocols require authentication setup${NC}\n"
+    
+    read -p "$(echo -e ${CYAN}"Enter desired admin username [default: admin]: "${NC})" ADMIN_USER
+    ADMIN_USER=${ADMIN_USER:-admin}
+    
+    while true; do
+        read -s -p "$(echo -e ${CYAN}"Enter admin password: "${NC})" ADMIN_PASS
+        echo
+        read -s -p "$(echo -e ${CYAN}"Confirm admin password: "${NC})" ADMIN_PASS_CONFIRM
+        echo
+        
+        if [ "$ADMIN_PASS" = "$ADMIN_PASS_CONFIRM" ]; then
+            if [ ${#ADMIN_PASS} -ge 8 ]; then
+                break
+            else
+                echo -e "${RED}[ERROR]: Password must be at least 8 characters long${NC}"
+            fi
+        else
+            echo -e "${RED}[ERROR]: Passwords do not match. Please try again${NC}"
+        fi
+    done
+    
+    # Hash the password using bcrypt (requires nodejs)
+    HASHED_PASSWORD=$(node -e "const bcrypt = require('bcrypt'); console.log(bcrypt.hashSync('$ADMIN_PASS', 10))")
+    
+    success "Administrator neural implant configured"
+}
 # Package management
 install_dependencies() {
     log "Installing required packages..."
+    echo -e "${CYAN}[CORE]: Downloading neural enhancement modules...${NC}"
+    show_progress 5
     
     # Update system first
     log "Updating system packages..."
@@ -123,6 +212,7 @@ install_dependencies() {
         "redis-server"
         "ufw"
         "fail2ban"
+        "bcrypt"
     )
     
     for package in "${PACKAGES[@]}"; do
@@ -149,12 +239,14 @@ install_dependencies() {
     log "Node.js version: $(node -v)"
     log "npm version: $(npm -v)"
     
-    success "All dependencies installed successfully"
+    success "Neural enhancement modules installed"
 }
 
 # Create system user
 setup_system_user() {
     log "Creating system user and setting permissions..."
+    echo -e "${CYAN}[CORE]: Configuring neural interface permissions...${NC}"
+    show_progress 2
     
     if ! id "godeye" &>/dev/null; then
         useradd -r -s /bin/false godeye || error "Failed to create godeye user" "exit"
@@ -169,17 +261,13 @@ setup_system_user() {
     chmod -R 755 /opt/godeye
     chmod -R 644 /var/log/godeye
     
-    success "System user and permissions configured"
+    success "Neural interface permissions configured"
 }
-
-# Run initial system setup
-check_system_requirements
-install_dependencies
-setup_system_user
-
 # Application installation
 install_application() {
     log "Installing godEye application..."
+    echo -e "${CYAN}[CORE]: Integrating neural matrix components...${NC}"
+    show_progress 8
     
     cd /opt/godeye || error "Failed to access installation directory" "exit"
     
@@ -194,8 +282,8 @@ install_application() {
     REDIS_PASSWORD=$(openssl rand -hex 24)
     
     cat > .env << EOL
-VITE_ADMIN_USERNAME=admin
-VITE_ADMIN_PASSWORD=test
+VITE_ADMIN_USERNAME=$ADMIN_USER
+VITE_ADMIN_PASSWORD=$ADMIN_PASS
 VITE_WIREGUARD_PORT=$WG_PORT
 JWT_SECRET=$JWT_SECRET
 REDIS_PASSWORD=$REDIS_PASSWORD
@@ -218,12 +306,32 @@ EOL
         error "Build directory not created. Build failed." "exit"
     fi
     
-    success "Application installed successfully"
+    success "Neural matrix components integrated"
 }
 
+# Initialize admin user in Redis
+initialize_admin_user() {
+    log "Initializing admin user in Redis..."
+    echo -e "${CYAN}[CORE]: Creating neural authentication patterns...${NC}"
+    show_progress 3
+    
+    # Connect to Redis and set the admin user
+    redis-cli -a "$REDIS_PASSWORD" << EOF
+    HMSET user:$ADMIN_USER username "$ADMIN_USER" password "$HASHED_PASSWORD" role "admin"
+    SADD users $ADMIN_USER
+EOF
+    
+    if [ $? -eq 0 ]; then
+        success "Neural authentication patterns established"
+    else
+        error "Failed to initialize admin user" "exit"
+    fi
+}
 # Configure services
 configure_services() {
     log "Configuring system services..."
+    echo -e "${CYAN}[CORE]: Establishing neural network protocols...${NC}"
+    show_progress 4
     
     log "Configuring Redis..."
     sed -i "s/# requirepass foobared/requirepass $REDIS_PASSWORD/" /etc/redis/redis.conf
@@ -304,12 +412,13 @@ EOL
     
     nginx -t >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE" || error "Invalid Nginx configuration" "exit"
     
-    success "Services configured successfully"
+    success "Neural network protocols established"
 }
-
 # Configure security
 setup_security() {
     log "Configuring security measures..."
+    echo -e "${CYAN}[CORE]: Deploying neural defense systems...${NC}"
+    show_progress 4
     
     log "Configuring firewall..."
     ufw default deny incoming
@@ -348,12 +457,14 @@ EOL
     
     systemctl restart fail2ban
     
-    success "Security measures configured"
+    success "Neural defense systems activated"
 }
 
 # Start services
 start_services() {
     log "Starting services..."
+    echo -e "${CYAN}[CORE]: Activating neural interface services...${NC}"
+    show_progress 5
     
     systemctl daemon-reload
     
@@ -369,55 +480,64 @@ start_services() {
         fi
     done
     
-    success "All services started successfully"
-}
-# Final setup and checks
-finalize_installation() {
-    log "Performing final checks..."
-    
-    IP_ADDRESS=$(hostname -I | awk '{print $1}')
-    
-    if curl -s -o /dev/null -w "%{http_code}" "http://$IP_ADDRESS:1337"; then
-        success "Installation completed successfully!"
-        
-        echo -e "\n${GREEN}╔════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${GREEN}║             godEye Installation Complete                ║${NC}"
-        echo -e "${GREEN}╚════════════════════════════════════════════════════════╝${NC}"
-        echo -e "\n${CYAN}Access godEye at:${NC} http://$IP_ADDRESS:1337"
-        echo -e "\n${CYAN}Credentials:${NC}"
-        echo -e "Username: admin"
-        echo -e "Password: test"
-        echo -e "\n${CYAN}Useful Commands:${NC}"
-        echo -e "View logs: ${GRAY}sudo journalctl -u godeye -f${NC}"
-        echo -e "View API logs: ${GRAY}sudo journalctl -u godeye-api -f${NC}"
-        echo -e "Restart services: ${GRAY}sudo systemctl restart godeye godeye-api${NC}"
-        echo -e "\n${CYAN}For issues or updates, visit:${NC} https://github.com/subGOD/godeye\n"
-    else
-        error "Installation completed but application is not accessible"
-    fi
+    success "Neural interface services activated"
 }
 
 # Detect WireGuard port
 detect_wireguard_port() {
     log "Detecting WireGuard configuration..."
+    echo -e "${CYAN}[CORE]: Scanning for quantum tunneling protocols...${NC}"
+    show_progress 2
+    
     if [ -f "/etc/wireguard/wg0.conf" ]; then
         WG_PORT=$(grep "ListenPort" /etc/wireguard/wg0.conf | awk '{print $3}')
         log "Detected WireGuard port: $WG_PORT"
+        success "Quantum tunneling protocols detected"
     else
         error "WireGuard configuration not found." "exit"
+    fi
+}
+# Final setup and checks
+finalize_installation() {
+    log "Performing final checks..."
+    echo -e "${CYAN}[CORE]: Verifying neural interface stability...${NC}"
+    show_progress 3
+    
+    IP_ADDRESS=$(hostname -I | awk '{print $1}')
+    
+    if curl -s -o /dev/null -w "%{http_code}" "http://$IP_ADDRESS:1337"; then
+        success "Neural interface initialization complete"
+        
+        echo -e "\n${GREEN}╔════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${GREEN}║             godEye Installation Complete                ║${NC}"
+        echo -e "${GREEN}╚════════════════════════════════════════════════════════╝${NC}"
+        echo -e "\n${CYAN}Access neural interface at:${NC} http://$IP_ADDRESS:1337"
+        echo -e "\n${CYAN}Authentication credentials:${NC}"
+        echo -e "Username: $ADMIN_USER"
+        echo -e "Password: [REDACTED]"
+        echo -e "\n${CYAN}Neural command protocols:${NC}"
+        echo -e "View logs: ${GRAY}sudo journalctl -u godeye -f${NC}"
+        echo -e "View API logs: ${GRAY}sudo journalctl -u godeye-api -f${NC}"
+        echo -e "Restart services: ${GRAY}sudo systemctl restart godeye godeye-api${NC}"
+        echo -e "\n${CYAN}Neural support protocols:${NC} https://github.com/subGOD/godeye\n"
+    else
+        error "Installation completed but neural interface is not accessible"
     fi
 }
 
 # Main installation sequence
 main() {
+    display_banner
     check_system_requirements
     detect_wireguard_port
+    create_admin_credentials
     install_dependencies
     setup_system_user
     install_application
     configure_services
     setup_security
     start_services
+    initialize_admin_user
     finalize_installation
 }
 
