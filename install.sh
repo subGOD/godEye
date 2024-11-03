@@ -176,6 +176,7 @@ setup_system_user() {
 check_system_requirements
 install_dependencies
 setup_system_user
+
 # Application installation
 install_application() {
     log "Installing godEye application..."
@@ -202,10 +203,17 @@ NODE_ENV=production
 EOL
     
     log "Installing Node.js dependencies..."
-    npm ci --production >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE" || error "Failed to install dependencies" "exit"
+    # Show more detailed npm output
+    npm ci --production 2>&1 | tee -a "$LOG_FILE" || error "Failed to install dependencies" "exit"
     
     log "Building application..."
-    npm run build >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE" || error "Failed to build application" "exit"
+    # Show more detailed build output
+    npm run build 2>&1 | tee -a "$LOG_FILE" || error "Failed to build application" "exit"
+    
+    # Check if build directory exists
+    if [ ! -d "dist" ]; then
+        error "Build directory not created. Build failed." "exit"
+    fi
     
     success "Application installed successfully"
 }
