@@ -203,8 +203,11 @@ NODE_ENV=production
 EOL
     
     log "Installing Node.js dependencies..."
-    # Show more detailed npm output
-    npm ci --production 2>&1 | tee -a "$LOG_FILE" || error "Failed to install dependencies" "exit"
+    # Install vite globally first
+    npm install -g vite >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE" || error "Failed to install vite" "exit"
+    
+    # Install all dependencies (including dev dependencies needed for build)
+    npm ci >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE" || error "Failed to install dependencies" "exit"
     
     log "Building application..."
     # Show more detailed build output
