@@ -130,6 +130,16 @@ install_dependencies() {
     if ! command -v curl &> /dev/null; then
         apt-get install -y curl || error "Failed to install curl" "exit"
     fi
+install_dependencies() {
+    log "Installing required packages..."
+    echo -e "${CYAN}[CORE]: Downloading neural enhancement modules...${NC}"
+    
+    log "Updating system packages..."
+    apt-get update -y || error "Failed to update package list" "exit"
+
+    if ! command -v curl &> /dev/null; then
+        apt-get install -y curl || error "Failed to install curl" "exit"
+    fi
 
     log "Setting up Node.js repository..."
     curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - || error "Failed to setup Node.js repository" "exit"
@@ -176,6 +186,49 @@ install_dependencies() {
     npm install -g node-gyp || error "Failed to install node-gyp" "exit"
     
     success "Neural enhancement modules installed"
+}
+
+setup_system_user() {
+    log "Creating system user and setting permissions..."
+    echo -e "${CYAN}[CORE]: Configuring neural interface permissions...${NC}"
+    show_progress 2
+    
+    if ! id "godeye" &>/dev/null; then
+        useradd -r -s /bin/false godeye || error "Failed to create godeye user" "exit"
+        usermod -aG sudo godeye
+    fi
+    
+    # Create and set permissions for directories
+    rm -rf /opt/godeye
+    mkdir -p /opt/godeye
+    mkdir -p /var/log/godeye
+    
+    chown -R godeye:godeye /opt/godeye
+    chown -R godeye:godeye /var/log/godeye
+    chmod -R 755 /opt/godeye
+    chmod -R 644 /var/log/godeye
+
+    # Create npm configuration directory for godeye user
+    mkdir -p /home/godeye/.npm
+    chown -R godeye:godeye /home/godeye
+    
+    success "Neural interface permissions configured"
+}
+
+create_admin_credentials() {
+    echo -e "\n${CYAN}[CORE]: Initializing administrator neural implant...${NC}"
+    echo -e "${YELLOW}[ALERT]: Security protocols require authentication setup${NC}\n"
+    
+    # Set default credentials for initial setup
+    ADMIN_USER="admin"
+    ADMIN_PASS="godEye2024!"
+    
+    log "Using default credentials for initial setup"
+    echo -e "${YELLOW}[ALERT]: Default credentials set - please change after initial login${NC}"
+    echo -e "${CYAN}Username: ${NC}${ADMIN_USER}"
+    echo -e "${CYAN}Password: ${NC}${ADMIN_PASS}"
+    
+    success "Administrator neural implant configured with default credentials"
 }
 
 setup_system_user() {
