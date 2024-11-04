@@ -363,7 +363,7 @@ EOL
     
     if [ ! -d "dist" ]; then
         error "Build directory not created. Build failed." "exit"
-    }
+    fi
 
     # Final permission adjustment
     chown -R godeye:godeye /opt/godeye
