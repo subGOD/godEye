@@ -135,6 +135,33 @@ detect_wireguard_port() {
     fi
 }
 
+setup_system_user() {
+    log "Creating system user and setting permissions..."
+    echo -e "${CYAN}[CORE]: Configuring neural interface permissions...${NC}"
+    show_progress 2
+    
+    if ! id "godeye" &>/dev/null; then
+        useradd -r -s /bin/false godeye || error "Failed to create godeye user" "exit"
+        usermod -aG sudo godeye
+    fi
+    
+    # Create and set permissions for directories
+    rm -rf /opt/godeye
+    mkdir -p /opt/godeye
+    mkdir -p /var/log/godeye
+    
+    chown -R godeye:godeye /opt/godeye
+    chown -R godeye:godeye /var/log/godeye
+    chmod -R 755 /opt/godeye
+    chmod -R 644 /var/log/godeye
+
+    # Create npm configuration directory for godeye user
+    mkdir -p /home/godeye/.npm
+    chown -R godeye:godeye /home/godeye
+    
+    success "Neural interface permissions configured"
+}
+
 install_dependencies() {
     log "Installing required packages..."
     echo -e "${CYAN}[CORE]: Downloading neural enhancement modules...${NC}"
@@ -194,33 +221,6 @@ install_dependencies() {
     success "Neural enhancement modules installed"
 }
 
-setup_system_user() {
-    log "Creating system user and setting permissions..."
-    echo -e "${CYAN}[CORE]: Configuring neural interface permissions...${NC}"
-    show_progress 2
-    
-    if ! id "godeye" &>/dev/null; then
-        useradd -r -s /bin/false godeye || error "Failed to create godeye user" "exit"
-        usermod -aG sudo godeye
-    fi
-    
-    # Create and set permissions for directories
-    rm -rf /opt/godeye
-    mkdir -p /opt/godeye
-    mkdir -p /var/log/godeye
-    
-    chown -R godeye:godeye /opt/godeye
-    chown -R godeye:godeye /var/log/godeye
-    chmod -R 755 /opt/godeye
-    chmod -R 644 /var/log/godeye
-
-    # Create npm configuration directory for godeye user
-    mkdir -p /home/godeye/.npm
-    chown -R godeye:godeye /home/godeye
-    
-    success "Neural interface permissions configured"
-}
-
 create_admin_credentials() {
     echo -e "\n${CYAN}[CORE]: Initializing administrator neural implant...${NC}"
     echo -e "${YELLOW}[ALERT]: Security protocols require authentication setup${NC}\n"
@@ -261,6 +261,7 @@ install_application() {
   },
   "dependencies": {
     "@heroicons/react": "^2.0.18",
+    "@tailwindcss/forms": "^0.5.7",
     "axios": "^1.6.0",
     "bcryptjs": "^2.4.3",
     "express": "^4.18.2",
@@ -289,7 +290,7 @@ unsafe-perm=true
 legacy-peer-deps=true
 EOL
 
-    # Create Vite config
+    # Create Vite config with explicit NODE_ENV handling
     cat > vite.config.js << EOL
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -303,8 +304,28 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     chunkSizeWarningLimit: 1000
+  },
+  define: {
+    'process.env.NODE_ENV': '"production"'
   }
 })
+EOL
+
+    # Create Tailwind config
+    cat > tailwind.config.js << EOL
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {},
+  },
+  plugins: [
+    require('@tailwindcss/forms'),
+  ],
+}
 EOL
 
     # Set correct permissions
@@ -322,7 +343,7 @@ EOL
     git clone https://github.com/subGOD/godeye.git temp >> "$LOG_FILE" 2>> "$ERROR_LOG_FILE"
     cp -r temp/* . && rm -rf temp
 
-    # Create environment file
+    # Create environment file without NODE_ENV
     JWT_SECRET=$(openssl rand -hex 32)
     REDIS_PASSWORD=$(openssl rand -hex 24)
     
@@ -332,18 +353,17 @@ VITE_ADMIN_PASSWORD=$ADMIN_PASS
 VITE_WIREGUARD_PORT=$WG_PORT
 JWT_SECRET=$JWT_SECRET
 REDIS_PASSWORD=$REDIS_PASSWORD
-NODE_ENV=production
 EOL
 
     log "Building application..."
-    npm run build 2>&1 | tee -a "$LOG_FILE" || {
+    NODE_ENV=production npm run build 2>&1 | tee -a "$LOG_FILE" || {
         cat "$LOG_FILE"
         error "Failed to build application" "exit"
     }
     
     if [ ! -d "dist" ]; then
         error "Build directory not created. Build failed." "exit"
-    fi
+    }
 
     # Final permission adjustment
     chown -R godeye:godeye /opt/godeye
