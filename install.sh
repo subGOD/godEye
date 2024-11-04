@@ -48,6 +48,37 @@ init_logging() {
     log "INFO" "Installation started at $(date)"
 }
 
+check_internet() {
+    log "INFO" "Checking internet connectivity..."
+    
+    # Fix potential DNS issues
+    log "INFO" "Configuring DNS resolution..."
+    cat > /etc/resolv.conf << EOF
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+nameserver 1.1.1.1
+EOF
+    
+    # Try multiple DNS servers
+    local dns_servers=("8.8.8.8" "8.8.4.4" "1.1.1.1")
+    local connected=false
+    
+    for dns in "${dns_servers[@]}"; do
+        if ping -c 1 -W 5 "$dns" >/dev/null 2>&1; then
+            connected=true
+            log "SUCCESS" "Internet connection verified using DNS server: $dns"
+            break
+        fi
+    done
+    
+    if ! $connected; then
+        log "ERROR" "No internet connection available"
+        return 1
+    fi
+    
+    return 0
+}
+
 check_requirements() {
     log "INFO" "Checking system requirements..."
     
@@ -74,32 +105,82 @@ check_requirements() {
         exit 1
     fi
 
-    if ! ping -c 1 -W 5 google.com >/dev/null 2>&1; then
-        log "ERROR" "No internet connection detected"
-        exit 1
-    fi
-
     log "SUCCESS" "System requirements verified"
 }
 
 install_dependencies() {
     log "INFO" "Installing dependencies..."
     
-    apt-get update -y || {
-        log "ERROR" "Failed to update package list"
+    # Update package list
+    log "INFO" "Updating package lists..."
+    for i in {1..3}; do
+        if apt-get update -y; then
+            break
+        else
+            log "WARN" "Attempt $i to update package lists failed, retrying..."
+            sleep 5
+        fi
+    done
+
+    # Install curl and other prerequisites first
+    log "INFO" "Installing prerequisites..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y curl gnupg2 ca-certificates build-essential || {
+        log "ERROR" "Failed to install prerequisites"
         return 1
     }
 
     if ! command -v node &> /dev/null; then
         log "INFO" "Installing Node.js..."
-        curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-        DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs build-essential || {
-            log "ERROR" "Failed to install Node.js"
+        
+        # Remove any existing Node.js installations
+        apt-get remove -y nodejs npm &>/dev/null || true
+        rm -rf /etc/apt/sources.list.d/nodesource* &>/dev/null || true
+        
+        # Add Node.js repository manually
+        log "INFO" "Adding NodeSource repository..."
+        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource.gpg.key | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
+        
+        # Add repository for Debian Buster (Raspberry Pi OS)
+        echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_18.x buster main" > /etc/apt/sources.list.d/nodesource.list
+        echo "deb-src [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_18.x buster main" >> /etc/apt/sources.list.d/nodesource.list
+        
+        # Update package list again after adding repository
+        log "INFO" "Updating package list with Node.js repository..."
+        apt-get update -y || {
+            log "ERROR" "Failed to update package list after adding Node.js repository"
             return 1
         }
+        
+        # Install Node.js
+        log "INFO" "Installing Node.js packages..."
+        DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs || {
+            log "ERROR" "Failed to install Node.js. Trying alternative method..."
+            
+            # Alternative installation method using n
+            log "INFO" "Attempting alternative Node.js installation via n..."
+            curl -L https://raw.githubusercontent.com/tj/n/master/bin/n -o /usr/local/bin/n
+            chmod +x /usr/local/bin/n
+            n 18 || {
+                log "ERROR" "Both installation methods failed"
+                return 1
+            }
+        }
+        
+        # Verify installation
+        if ! command -v node &> /dev/null; then
+            log "ERROR" "Node.js installation failed verification"
+            return 1
+        }
+        
+        local installed_version=$(node -v)
+        log "SUCCESS" "Node.js installed successfully (Version: $installed_version)"
+    else
+        local current_version=$(node -v)
+        log "INFO" "Node.js is already installed (Version: $current_version)"
     fi
 
-    local packages=(nginx redis-server ufw fail2ban python3 git curl)
+    # Install other required packages
+    local packages=(nginx redis-server ufw fail2ban python3 git)
     for package in "${packages[@]}"; do
         if ! dpkg -l | grep -q "^ii  $package"; then
             log "INFO" "Installing $package..."
@@ -110,19 +191,21 @@ install_dependencies() {
         fi
     done
 
+    # Update npm
     log "INFO" "Updating npm..."
     npm install -g npm@latest || {
         log "ERROR" "Failed to update npm"
         return 1
     }
 
+    # Install required global packages
     log "INFO" "Installing required global npm packages..."
     npm install -g bcrypt winston express-rate-limit helmet || {
         log "ERROR" "Failed to install required npm packages"
         return 1
     }
 
-    log "SUCCESS" "Dependencies installed"
+    log "SUCCESS" "All dependencies installed successfully"
     return 0
 }
 
@@ -380,6 +463,10 @@ verify_installation() {
 main() {
     init_logging
     check_requirements
+    check_internet || {
+        log "ERROR" "Internet connectivity check failed. Please check your network connection."
+        exit 1
+    }
     install_dependencies
     setup_user
     setup_application
