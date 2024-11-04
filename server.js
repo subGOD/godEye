@@ -7,79 +7,106 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
+import fs from 'fs';
+import bcrypt from 'bcrypt';
+import { createLogger, format, transports } from 'winston';
+import path from 'path';
 
-// Initialize dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Load environment variables
+// Initialize config
 config();
 
-// Validate required environment variables
-const requiredEnvVars = [
-    'VITE_ADMIN_USERNAME',
-    'VITE_ADMIN_PASSWORD',
-    'JWT_SECRET',
-    'REDIS_PASSWORD'
-];
+// Logging setup
+const logDir = '/var/log/godeye';
+!fs.existsSync(logDir) && fs.mkdirSync(logDir);
 
-const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
-if (missingEnvVars.length > 0) {
-    console.error('Missing required environment variables:', missingEnvVars);
-    process.exit(1);
+const logger = createLogger({
+    format: format.combine(
+        format.timestamp(),
+        format.json()
+    ),
+    transports: [
+        new transports.File({ 
+            filename: path.join(logDir, 'error.log'), 
+            level: 'error',
+            maxsize: 5242880, // 5MB
+            maxFiles: 5
+        }),
+        new transports.File({ 
+            filename: path.join(logDir, 'combined.log'),
+            maxsize: 5242880,
+            maxFiles: 5
+        })
+    ]
+});
+
+if (process.env.NODE_ENV !== 'production') {
+    logger.add(new transports.Console({
+        format: format.combine(
+            format.colorize(),
+            format.simple()
+        )
+    }));
 }
 
-// Initialize Express app
+// App initialization
 const app = express();
 const port = process.env.PORT || 3001;
+const SETUP_FILE = path.join(__dirname, '.setup_complete');
 
-// Security middleware
-app.use(helmet({
+// Security configurations
+const helmetConfig = {
     contentSecurityPolicy: {
         directives: {
             defaultSrc: ["'self'"],
             scriptSrc: ["'self'", "'unsafe-inline'"],
             styleSrc: ["'self'", "'unsafe-inline'"],
             imgSrc: ["'self'", "data:", "blob:"],
-            connectSrc: ["'self'"],
-        },
+            connectSrc: ["'self'"]
+        }
     },
     crossOriginEmbedderPolicy: false,
     crossOriginResourcePolicy: { policy: "cross-origin" }
-}));
+};
 
-// Rate limiting
-const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // Limit each IP to 100 requests per windowMs
+// Rate limiting configurations
+const rateLimitConfig = {
+    windowMs: 15 * 60 * 1000,
+    max: (req) => {
+        if (req.path === '/api/setup') return 3;
+        if (req.path === '/api/login') return 5;
+        return 100;
+    },
     standardHeaders: true,
     legacyHeaders: false,
     handler: (req, res) => {
+        logger.warn('Rate limit exceeded', { ip: req.ip, path: req.path });
         res.status(429).json({
-            error: 'Too many requests, please try again later.',
+            error: 'Too many requests',
+            message: 'Please try again later',
             retryAfter: res.getHeader('Retry-After')
         });
     }
-});
+};
 
-// Apply rate limiter to all routes
-app.use(limiter);
-
-// CORS configuration
-const corsOptions = {
-    origin: process.env.NODE_ENV === 'production' ? 
-        ['http://localhost:3000', 'http://localhost:1337'] : '*',
+// Middleware setup
+app.use(helmet(helmetConfig));
+app.use(rateLimit(rateLimitConfig));
+app.use(cors({
+    origin: process.env.NODE_ENV === 'production' 
+        ? ['http://localhost:3000', 'http://localhost:1337'] 
+        : '*',
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
-    maxAge: 86400 // 24 hours
-};
-
-app.use(cors(corsOptions));
+    maxAge: 86400
+}));
 app.use(express.json({ limit: '1mb' }));
 
 // Redis configuration
-const redisClient = new Redis({
+const redis = new Redis({
     port: 6379,
     host: '127.0.0.1',
     password: process.env.REDIS_PASSWORD,
@@ -90,211 +117,289 @@ const redisClient = new Redis({
     maxRetriesPerRequest: 3
 });
 
-// Redis error handling
-redisClient.on('error', (err) => {
-    console.error('Redis connection error:', err);
-    // Only exit on critical errors
-    if (err.code === 'ECONNREFUSED' || err.code === 'EAUTH') {
+redis.on('error', (err) => {
+    logger.error('Redis connection error:', err);
+    if (err.code === 'ECONNREFUSED') {
         process.exit(1);
     }
 });
 
-redisClient.on('connect', () => {
-    console.log('Successfully connected to Redis');
+redis.on('connect', () => {
+    logger.info('Redis connection established');
 });
 
-// Logging middleware
-const requestLogger = (req, res, next) => {
-    const timestamp = new Date().toISOString();
-    const { method, originalUrl, ip } = req;
-    console.log(`[${timestamp}] ${method} ${originalUrl} - IP: ${ip}`);
-    
-    // Log request body for POST requests, excluding sensitive routes
-    if (method === 'POST' && !originalUrl.includes('/login')) {
-        console.log('Request body:', JSON.stringify(req.body));
-    }
-    next();
+// Utilities
+const validatePassword = (password) => {
+    const minLength = 8;
+    const hasUpperCase = /[A-Z]/.test(password);
+    const hasLowerCase = /[a-z]/.test(password);
+    const hasNumbers = /\d/.test(password);
+    const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+
+    const errors = [];
+    if (password.length < minLength) errors.push('Password must be at least 8 characters long');
+    if (!hasUpperCase) errors.push('Password must contain at least one uppercase letter');
+    if (!hasLowerCase) errors.push('Password must contain at least one lowercase letter');
+    if (!hasNumbers) errors.push('Password must contain at least one number');
+    if (!hasSpecialChar) errors.push('Password must contain at least one special character');
+
+    return {
+        isValid: errors.length === 0,
+        errors
+    };
 };
 
-app.use(requestLogger);
+const isSetupComplete = () => {
+    try {
+        return fs.existsSync(SETUP_FILE);
+    } catch (error) {
+        logger.error('Error checking setup status:', error);
+        return false;
+    }
+};
 
-// JWT Authentication middleware
-const authenticateToken = (req, res, next) => {
+const completeSetup = () => {
+    try {
+        fs.writeFileSync(SETUP_FILE, new Date().toISOString());
+        return true;
+    } catch (error) {
+        logger.error('Error writing setup file:', error);
+        return false;
+    }
+};
+
+// Authentication middleware
+const authenticateToken = async (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) {
-        return res.status(401).json({ 
+        logger.warn('Authentication attempt without token', { ip: req.ip });
+        return res.status(401).json({
             error: 'Authentication required',
-            message: 'No token provided' 
+            message: 'No token provided'
         });
     }
 
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const userSession = await redis.get(`session:${decoded.id}`);
+        
+        if (!userSession || userSession !== token) {
+            logger.warn('Invalid session detected', { ip: req.ip, userId: decoded.id });
+            return res.status(401).json({
+                error: 'Invalid session',
+                message: 'Session expired or invalid'
+            });
+        }
+
         req.user = decoded;
         next();
     } catch (err) {
+        logger.error('Authentication error:', err);
+        
         if (err instanceof jwt.TokenExpiredError) {
-            return res.status(401).json({ 
+            return res.status(401).json({
                 error: 'Token expired',
-                message: 'Please log in again' 
+                message: 'Please log in again'
             });
         }
-        return res.status(403).json({ 
+        
+        return res.status(403).json({
             error: 'Invalid token',
-            message: 'Authentication failed' 
+            message: 'Authentication failed'
         });
     }
 };
 
-// Login endpoint with improved error handling
-app.post('/api/login', async (req, res) => {
+// Routes
+app.post('/api/setup', async (req, res) => {
     try {
-        const { username, password } = req.body;
-
-        if (!username || !password) {
-            return res.status(400).json({ 
-                error: 'Missing credentials',
-                message: 'Username and password are required' 
+        if (isSetupComplete()) {
+            logger.warn('Setup attempt after completion', { ip: req.ip });
+            return res.status(403).json({
+                error: 'Setup already completed',
+                message: 'System is already configured'
             });
         }
 
-        const isValidCredentials = 
-            username === process.env.VITE_ADMIN_USERNAME && 
-            password === process.env.VITE_ADMIN_PASSWORD;
+        const { username, password } = req.body;
 
-        if (!isValidCredentials) {
-            console.warn(`Failed login attempt for user: ${username}`);
-            return res.status(401).json({ 
+        if (!username || !password) {
+            return res.status(400).json({
+                error: 'Invalid setup data',
+                message: 'Username and password are required'
+            });
+        }
+
+        const passwordValidation = validatePassword(password);
+        if (!passwordValidation.isValid) {
+            return res.status(400).json({
+                error: 'Invalid password',
+                message: passwordValidation.errors
+            });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 12);
+        
+        await redis.set('admin_credentials', JSON.stringify({
+            username,
+            password: hashedPassword
+        }));
+
+        if (!completeSetup()) {
+            throw new Error('Failed to mark setup as complete');
+        }
+
+        const token = jwt.sign(
+            { id: 1, username, role: 'admin' },
+            process.env.JWT_SECRET,
+            { expiresIn: '24h', algorithm: 'HS256' }
+        );
+
+        await redis.set(`session:1`, token, 'EX', 86400);
+
+        logger.info('Initial setup completed', { username, ip: req.ip });
+        
+        res.json({
+            success: true,
+            message: 'Setup completed successfully',
+            token,
+            user: { id: 1, username, role: 'admin' }
+        });
+    } catch (error) {
+        logger.error('Setup error:', error);
+        res.status(500).json({
+            error: 'Setup failed',
+            message: 'Failed to complete setup'
+        });
+    }
+});
+
+app.post('/api/login', async (req, res) => {
+    try {
+        if (!isSetupComplete()) {
+            return res.status(403).json({
+                error: 'Setup required',
+                message: 'Initial setup has not been completed'
+            });
+        }
+
+        const { username, password } = req.body;
+        
+        if (!username || !password) {
+            return res.status(400).json({
                 error: 'Invalid credentials',
-                message: 'Username or password is incorrect' 
+                message: 'Username and password are required'
+            });
+        }
+
+        const storedCreds = await redis.get('admin_credentials');
+        if (!storedCreds) {
+            logger.error('Admin credentials not found in Redis');
+            return res.status(500).json({
+                error: 'Configuration error',
+                message: 'Admin credentials not found'
+            });
+        }
+
+        const adminCreds = JSON.parse(storedCreds);
+        const passwordMatch = await bcrypt.compare(password, adminCreds.password);
+        
+        if (username !== adminCreds.username || !passwordMatch) {
+            logger.warn('Failed login attempt', { username, ip: req.ip });
+            return res.status(401).json({
+                error: 'Invalid credentials',
+                message: 'Invalid username or password'
             });
         }
 
         const token = jwt.sign(
-            { 
-                id: 1,
-                username: username,
-                role: 'admin'
-            },
+            { id: 1, username, role: 'admin' },
             process.env.JWT_SECRET,
-            { 
-                expiresIn: '24h',
-                algorithm: 'HS256'
-            }
+            { expiresIn: '24h', algorithm: 'HS256' }
         );
 
-        console.log(`Successful login for user: ${username}`);
-        res.json({ 
+        await redis.set(`session:1`, token, 'EX', 86400);
+
+        logger.info('Successful login', { username, ip: req.ip });
+
+        res.json({
             token,
-            user: {
-                id: 1,
-                username: username,
-                role: 'admin'
-            }
+            user: { id: 1, username, role: 'admin' }
         });
     } catch (error) {
-        console.error('Login error:', error);
-        res.status(500).json({ 
-            error: 'Internal server error',
-            message: 'An unexpected error occurred during login' 
+        logger.error('Login error:', error);
+        res.status(500).json({
+            error: 'Server error',
+            message: 'An unexpected error occurred'
         });
     }
 });
 
-// Protected status endpoint
-app.get('/api/status', authenticateToken, (req, res) => {
-    res.json({ 
-        status: 'operational',
-        authenticated: true,
-        user: req.user,
-        serverTime: new Date().toISOString()
+app.get('/api/setup/status', (req, res) => {
+    res.json({
+        isSetupComplete: isSetupComplete()
     });
 });
 
-// WireGuard client data endpoints
-app.get('/api/clients', authenticateToken, async (req, res) => {
+app.post('/api/logout', authenticateToken, async (req, res) => {
     try {
-        const clientData = await redisClient.get('wireguard_clients');
-        res.json(clientData ? JSON.parse(clientData) : []);
+        await redis.del(`session:${req.user.id}`);
+        logger.info('User logged out', { userId: req.user.id, ip: req.ip });
+        res.json({ success: true, message: 'Logged out successfully' });
     } catch (error) {
-        console.error('Error retrieving client data:', error);
-        res.status(500).json({ 
-            error: 'Database error',
-            message: 'Failed to retrieve client data' 
+        logger.error('Logout error:', error);
+        res.status(500).json({
+            error: 'Server error',
+            message: 'Failed to logout'
         });
     }
 });
 
-app.post('/api/clients', authenticateToken, async (req, res) => {
-    try {
-        const { clientData } = req.body;
-        
-        if (!clientData || !Array.isArray(clientData)) {
-            return res.status(400).json({ 
-                error: 'Invalid data',
-                message: 'Client data must be an array' 
-            });
-        }
-
-        await redisClient.set('wireguard_clients', JSON.stringify(clientData));
-        res.json({ success: true });
-    } catch (error) {
-        console.error('Error storing client data:', error);
-        res.status(500).json({ 
-            error: 'Database error',
-            message: 'Failed to store client data' 
-        });
-    }
-});
-
-// Error handling middleware
+// Error handling
 app.use((err, req, res, next) => {
-    console.error('Unhandled error:', err);
-    res.status(500).json({ 
+    logger.error('Unhandled error:', err);
+    res.status(500).json({
         error: 'Internal server error',
         message: process.env.NODE_ENV === 'production' 
-            ? 'An unexpected error occurred' 
-            : err.message 
+            ? 'An unexpected error occurred'
+            : err.message
     });
 });
 
-// Start server
+// Server startup
 const server = app.listen(port, () => {
-    console.log(`Server running on port ${port}`);
+    logger.info(`Server running on port ${port}`);
 });
 
 // Graceful shutdown handling
 const shutdown = async (signal) => {
-    console.log(`\nReceived ${signal}. Starting graceful shutdown...`);
+    logger.info(`Received ${signal}. Starting graceful shutdown...`);
     
-    // Close server first to stop accepting new connections
     server.close(() => {
-        console.log('HTTP server closed');
+        logger.info('HTTP server closed');
     });
 
     try {
-        // Disconnect Redis
-        await redisClient.quit();
-        console.log('Redis connection closed');
-        
-        // Exit process
+        await redis.quit();
+        logger.info('Redis connection closed');
         process.exit(0);
     } catch (err) {
-        console.error('Error during shutdown:', err);
+        logger.error('Error during shutdown:', err);
         process.exit(1);
     }
 };
 
-// Handle various shutdown signals
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('uncaughtException', (err) => {
-    console.error('Uncaught Exception:', err);
+    logger.error('Uncaught Exception:', err);
     shutdown('uncaughtException');
 });
 process.on('unhandledRejection', (reason, promise) => {
-    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
     shutdown('unhandledRejection');
 });
+
+export default app;

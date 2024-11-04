@@ -116,8 +116,9 @@ install_dependencies() {
         return 1
     }
 
-    npm install -g node-gyp || {
-        log "ERROR" "Failed to install node-gyp"
+    log "INFO" "Installing required global npm packages..."
+    npm install -g bcrypt winston express-rate-limit helmet || {
+        log "ERROR" "Failed to install required npm packages"
         return 1
     }
 
@@ -172,28 +173,20 @@ legacy-peer-deps=true
 registry=https://registry.npmjs.org/
 EOF
 
-    local admin_user=${ADMIN_USER:-"admin"}
-    local admin_pass=${ADMIN_PASS:-$(openssl rand -base64 12)}
+    # Generate only the required secrets
     local jwt_secret=$(openssl rand -base64 32)
     local redis_pass=$(openssl rand -base64 24)
 
+    # Create environment file without admin credentials
     cat > .env << EOF
-VITE_ADMIN_USERNAME=$admin_user
-VITE_ADMIN_PASSWORD=$admin_pass
-JWT_SECRET=$jwt_secret
-REDIS_PASSWORD=$redis_pass
+JWT_SECRET="$jwt_secret"
+REDIS_PASSWORD="$redis_pass"
 PORT=$APP_PORT
 NODE_ENV=production
 EOF
 
-    log "INFO" "Installing core dependencies..."
-    npm install --no-audit express-rate-limit helmet || {
-        log "ERROR" "Failed to install core dependencies"
-        return 1
-    }
-
     log "INFO" "Installing project dependencies..."
-    npm install --no-audit --no-fund --legacy-peer-deps || {
+    npm install --no-audit --no-fund --legacy-peer-deps bcrypt winston express-rate-limit helmet || {
         log "ERROR" "Failed to install project dependencies"
         return 1
     }
@@ -371,10 +364,10 @@ verify_installation() {
     echo -e "${GREEN}╚════════════════════════════════════════════════════════╝${NC}"
     
     echo -e "\n${CYAN}Access your installation at:${NC} http://${ip_address}:${NGINX_PORT}"
-    echo -e "\n${CYAN}Default Credentials:${NC}"
-    echo -e "Username: $admin_user"
-    echo -e "Password: $admin_pass"
-    echo -e "\n${RED}IMPORTANT: Change your password after first login!${NC}"
+    echo -e "\n${CYAN}Complete the setup:${NC}"
+    echo -e "1. Visit the URL above"
+    echo -e "2. Create your administrator account"
+    echo -e "3. Make sure to use a strong password"
     
     echo -e "\n${CYAN}Useful Commands:${NC}"
     echo -e "View API logs: ${NC}sudo journalctl -u godeye-api -f"
@@ -394,4 +387,5 @@ main() {
     verify_installation
 }
 
+# Start installation
 main
