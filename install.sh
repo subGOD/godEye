@@ -41,7 +41,6 @@ error_handler() {
 trap 'error_handler ${LINENO} $?' ERR
 
 init_logging() {
-    # Create log directory with proper permissions
     mkdir -p /var/log/godeye
     touch "$LOG_FILE" "$ERROR_LOG_FILE"
     chmod 755 /var/log/godeye
@@ -52,34 +51,29 @@ init_logging() {
 check_requirements() {
     log "INFO" "Checking system requirements..."
     
-    # Root check
     if [ "$EUID" -ne 0 ]; then 
         log "ERROR" "Please run as root or with sudo"
         exit 1
     fi
 
-    # Architecture check
     ARCH=$(uname -m)
     if [[ ! "$ARCH" =~ ^(aarch64|arm64|armv7l)$ ]]; then
         log "ERROR" "Unsupported architecture: $ARCH. This script is designed for Raspberry Pi."
         exit 1
     fi
 
-    # Memory check
     local total_ram=$(free -m | awk '/^Mem:/{print $2}')
     if [ "$total_ram" -lt 1024 ]; then
         log "ERROR" "Insufficient RAM. Minimum 1GB required."
         exit 1
     fi
 
-    # Disk space check
     local available_space=$(df -m /opt | awk 'NR==2 {print $4}')
     if [ "$available_space" -lt 1024 ]; then
         log "ERROR" "Insufficient disk space. Minimum 1GB required."
         exit 1
     fi
 
-    # Network connectivity check
     if ! ping -c 1 -W 5 google.com >/dev/null 2>&1; then
         log "ERROR" "No internet connection detected"
         exit 1
@@ -91,13 +85,11 @@ check_requirements() {
 install_dependencies() {
     log "INFO" "Installing dependencies..."
     
-    # Update package list
     apt-get update -y || {
         log "ERROR" "Failed to update package list"
         return 1
     }
 
-    # Install Node.js
     if ! command -v node &> /dev/null; then
         log "INFO" "Installing Node.js..."
         curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
@@ -107,7 +99,6 @@ install_dependencies() {
         }
     fi
 
-    # Install other dependencies
     local packages=(nginx redis-server ufw fail2ban python3 git curl)
     for package in "${packages[@]}"; do
         if ! dpkg -l | grep -q "^ii  $package"; then
@@ -119,14 +110,12 @@ install_dependencies() {
         fi
     done
 
-    # Update npm to latest version
     log "INFO" "Updating npm..."
     npm install -g npm@latest || {
         log "ERROR" "Failed to update npm"
         return 1
     }
 
-    # Install node-gyp globally
     npm install -g node-gyp || {
         log "ERROR" "Failed to install node-gyp"
         return 1
@@ -139,7 +128,6 @@ install_dependencies() {
 setup_user() {
     log "INFO" "Setting up system user..."
     
-    # Create godeye user and group if they don't exist
     if ! getent group "$APP_GROUP" >/dev/null; then
         groupadd "$APP_GROUP"
     fi
@@ -150,12 +138,10 @@ setup_user() {
         chown "$APP_USER:$APP_GROUP" "/home/$APP_USER"
     fi
 
-    # Create required directories
     mkdir -p "$INSTALL_DIR"
     mkdir -p "/var/log/godeye"
     mkdir -p "/home/$APP_USER/.npm"
 
-    # Set correct ownership and permissions
     chown -R "$APP_USER:$APP_GROUP" "$INSTALL_DIR"
     chown -R "$APP_USER:$APP_GROUP" "/var/log/godeye"
     chown -R "$APP_USER:$APP_GROUP" "/home/$APP_USER"
@@ -175,26 +161,22 @@ setup_application() {
         return 1
     }
     
-    # Clone repository
     git clone https://github.com/subGOD/godeye.git . || {
         log "ERROR" "Failed to clone repository"
         return 1
     }
 
-    # Create npm config for root/sudo installations
     cat > .npmrc << 'EOF'
 unsafe-perm=true
 legacy-peer-deps=true
 registry=https://registry.npmjs.org/
 EOF
 
-    # Generate secure credentials
     local admin_user=${ADMIN_USER:-"admin"}
     local admin_pass=${ADMIN_PASS:-$(openssl rand -base64 12)}
     local jwt_secret=$(openssl rand -base64 32)
     local redis_pass=$(openssl rand -base64 24)
 
-    # Create environment file
     cat > .env << EOF
 VITE_ADMIN_USERNAME=$admin_user
 VITE_ADMIN_PASSWORD=$admin_pass
@@ -204,21 +186,18 @@ PORT=$APP_PORT
 NODE_ENV=production
 EOF
 
-    # Install specific required dependencies first
     log "INFO" "Installing core dependencies..."
     npm install --no-audit express-rate-limit helmet || {
         log "ERROR" "Failed to install core dependencies"
         return 1
     }
 
-    # Install all other project dependencies
     log "INFO" "Installing project dependencies..."
     npm install --no-audit --no-fund --legacy-peer-deps || {
         log "ERROR" "Failed to install project dependencies"
         return 1
     }
     
-    # Build application
     log "INFO" "Building application..."
     NODE_ENV=production npm run build || {
         log "ERROR" "Build failed"
@@ -230,10 +209,12 @@ EOF
         return 1
     }
     
-    # Set permissions
     chown -R "$APP_USER:$APP_GROUP" "$INSTALL_DIR"
     chmod 600 "$INSTALL_DIR/.env"
     chmod 600 "$INSTALL_DIR/.npmrc"
+    
+    # Store Redis password for service configuration
+    REDIS_PASSWORD="$redis_pass"
     
     log "SUCCESS" "Application setup complete"
     return 0
@@ -242,7 +223,6 @@ EOF
 setup_services() {
     log "INFO" "Configuring services..."
 
-    # Configure Redis
     log "INFO" "Configuring Redis..."
     sed -i "s/# requirepass foobared/requirepass $REDIS_PASSWORD/" /etc/redis/redis.conf
     systemctl restart redis-server || {
@@ -250,7 +230,6 @@ setup_services() {
         return 1
     }
 
-    # API Service
     cat > "/etc/systemd/system/godeye-api.service" << EOF
 [Unit]
 Description=godEye API Server
@@ -273,7 +252,6 @@ StandardError=append:/var/log/godeye/api-error.log
 WantedBy=multi-user.target
 EOF
 
-    # Frontend Service
     cat > "/etc/systemd/system/godeye-frontend.service" << EOF
 [Unit]
 Description=godEye Frontend
@@ -296,7 +274,6 @@ StandardError=append:/var/log/godeye/frontend-error.log
 WantedBy=multi-user.target
 EOF
 
-    # NGINX Configuration
     cat > "/etc/nginx/sites-available/godeye" << EOF
 server {
     listen $NGINX_PORT default_server;
@@ -326,11 +303,9 @@ server {
 }
 EOF
 
-    # Enable site and remove default
     rm -f /etc/nginx/sites-enabled/default
     ln -sf /etc/nginx/sites-available/godeye /etc/nginx/sites-enabled/
 
-    # Configure firewall
     log "INFO" "Configuring firewall..."
     ufw default deny incoming
     ufw default allow outgoing
@@ -338,7 +313,6 @@ EOF
     ufw allow "$NGINX_PORT"/tcp
     echo "y" | ufw enable
 
-    # Reload and start services
     log "INFO" "Starting services..."
     systemctl daemon-reload
 
@@ -361,7 +335,6 @@ verify_installation() {
     
     local failed=0
     
-    # Check service status
     local services=(redis-server godeye-api godeye-frontend nginx)
     for service in "${services[@]}"; do
         if ! systemctl is-active --quiet "$service"; then
@@ -371,7 +344,6 @@ verify_installation() {
         fi
     done
 
-    # Check ports
     local ports=($APP_PORT $FRONTEND_PORT $NGINX_PORT)
     for port in "${ports[@]}"; do
         if ! netstat -tuln | grep -q ":$port "; then
@@ -380,7 +352,6 @@ verify_installation() {
         fi
     done
 
-    # Verify Redis connection
     if ! redis-cli ping > /dev/null 2>&1; then
         log "ERROR" "Redis connection failed"
         failed=1
@@ -395,7 +366,6 @@ verify_installation() {
     
     log "SUCCESS" "Installation verified successfully"
     
-    # Display installation summary
     echo -e "\n${GREEN}╔════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║             godEye Installation Complete                ║${NC}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════╝${NC}"
@@ -424,5 +394,4 @@ main() {
     verify_installation
 }
 
-# Start installation
 main
