@@ -83,7 +83,7 @@ check_requirements() {
     if ! ping -c 1 -W 5 google.com >/dev/null 2>&1; then
         log "ERROR" "No internet connection detected"
         exit 1
-    }
+    fi
 
     log "SUCCESS" "System requirements verified"
 }
