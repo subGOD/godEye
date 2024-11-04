@@ -7,7 +7,7 @@ BLUE='\e[34m'
 CYAN='\e[38;5;123m'
 GRAY='\e[90m'
 YELLOW='\e[33m'
-NC='\e[0m'
+NC='\e[0m' # No Color
 CHECK_MARK="\u2714"
 PROCESSING_MARK="⟳"
 
@@ -44,8 +44,8 @@ success() {
 # Initialize log files
 sudo touch "$LOG_FILE" "$ERROR_LOG_FILE"
 sudo chmod 644 "$LOG_FILE" "$ERROR_LOG_FILE"
-
 log "Installation started at $(date '+%Y-%m-%d %H:%M:%S')"
+
 # Clear screen and show banner
 clear
 
@@ -120,16 +120,21 @@ check_system_requirements() {
 
     success "System requirements verified"
 }
-install_dependencies() {
-    log "Installing required packages..."
-    echo -e "${CYAN}[CORE]: Downloading neural enhancement modules...${NC}"
-    
-    log "Updating system packages..."
-    apt-get update -y || error "Failed to update package list" "exit"
 
-    if ! command -v curl &> /dev/null; then
-        apt-get install -y curl || error "Failed to install curl" "exit"
+detect_wireguard_port() {
+    log "Detecting WireGuard configuration..."
+    echo -e "${CYAN}[CORE]: Scanning for quantum tunneling protocols...${NC}"
+    show_progress 2
+    
+    if [ -f "/etc/wireguard/wg0.conf" ]; then
+        WG_PORT=$(grep "ListenPort" /etc/wireguard/wg0.conf | awk '{print $3}')
+        log "Detected WireGuard port: $WG_PORT"
+        success "Quantum tunneling protocols detected"
+    else
+        error "WireGuard configuration not found." "exit"
     fi
+}
+
 install_dependencies() {
     log "Installing required packages..."
     echo -e "${CYAN}[CORE]: Downloading neural enhancement modules...${NC}"
@@ -178,10 +183,11 @@ install_dependencies() {
         error "npm installation failed" "exit"
     fi
 
+    # Display versions
     log "Node.js version: $(node -v)"
     log "npm version: $(npm -v)"
     
-    # Install global npm packages
+    # Update npm and install global packages
     npm install -g npm@latest || error "Failed to update npm" "exit"
     npm install -g node-gyp || error "Failed to install node-gyp" "exit"
     
@@ -231,59 +237,6 @@ create_admin_credentials() {
     success "Administrator neural implant configured with default credentials"
 }
 
-setup_system_user() {
-    log "Creating system user and setting permissions..."
-    echo -e "${CYAN}[CORE]: Configuring neural interface permissions...${NC}"
-    show_progress 2
-    
-    if ! id "godeye" &>/dev/null; then
-        useradd -r -s /bin/false godeye || error "Failed to create godeye user" "exit"
-        usermod -aG sudo godeye
-    fi
-    
-    # Create and set permissions for directories
-    rm -rf /opt/godeye
-    mkdir -p /opt/godeye
-    mkdir -p /var/log/godeye
-    
-    chown -R godeye:godeye /opt/godeye
-    chown -R godeye:godeye /var/log/godeye
-    chmod -R 755 /opt/godeye
-    chmod -R 644 /var/log/godeye
-
-    # Create npm configuration directory for godeye user
-    mkdir -p /home/godeye/.npm
-    chown -R godeye:godeye /home/godeye
-    
-    success "Neural interface permissions configured"
-}
-
-create_admin_credentials() {
-    echo -e "\n${CYAN}[CORE]: Initializing administrator neural implant...${NC}"
-    echo -e "${YELLOW}[ALERT]: Security protocols require authentication setup${NC}\n"
-    
-    read -p "$(echo -e ${CYAN}"Enter desired admin username [default: admin]: "${NC})" ADMIN_USER
-    ADMIN_USER=${ADMIN_USER:-admin}
-    
-    while true; do
-        read -s -p "$(echo -e ${CYAN}"Enter admin password: "${NC})" ADMIN_PASS
-        echo
-        read -s -p "$(echo -e ${CYAN}"Confirm admin password: "${NC})" ADMIN_PASS_CONFIRM
-        echo
-        
-        if [ "$ADMIN_PASS" = "$ADMIN_PASS_CONFIRM" ]; then
-            if [ ${#ADMIN_PASS} -ge 8 ]; then
-                break
-            else
-                echo -e "${RED}[ERROR]: Password must be at least 8 characters long${NC}"
-            fi
-        else
-            echo -e "${RED}[ERROR]: Passwords do not match. Please try again${NC}"
-        fi
-    done
-    
-    success "Administrator neural implant configured"
-}
 install_application() {
     log "Installing godEye application..."
     echo -e "${CYAN}[CORE]: Integrating neural matrix components...${NC}"
@@ -336,6 +289,24 @@ unsafe-perm=true
 legacy-peer-deps=true
 EOL
 
+    # Create Vite config
+    cat > vite.config.js << EOL
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    host: true,
+    port: 3000
+  },
+  build: {
+    outDir: 'dist',
+    chunkSizeWarningLimit: 1000
+  }
+})
+EOL
+
     # Set correct permissions
     chown -R godeye:godeye /opt/godeye
     chmod -R 755 /opt/godeye
@@ -364,24 +335,6 @@ REDIS_PASSWORD=$REDIS_PASSWORD
 NODE_ENV=production
 EOL
 
-    # Create Vite config
-    cat > vite.config.js << EOL
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    host: true,
-    port: 3000
-  },
-  build: {
-    outDir: 'dist',
-    chunkSizeWarningLimit: 1000
-  }
-})
-EOL
-
     log "Building application..."
     npm run build 2>&1 | tee -a "$LOG_FILE" || {
         cat "$LOG_FILE"
@@ -398,6 +351,7 @@ EOL
     
     success "Neural matrix components integrated"
 }
+
 configure_services() {
     log "Configuring system services..."
     echo -e "${CYAN}[CORE]: Establishing neural network protocols...${NC}"
@@ -500,13 +454,6 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
-
-    location /socket.io {
-        proxy_pass http://localhost:3001;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
 }
 EOL
     
@@ -517,6 +464,7 @@ EOL
     
     success "Neural network protocols established"
 }
+
 setup_security() {
     log "Configuring security measures..."
     echo -e "${CYAN}[CORE]: Deploying neural defense systems...${NC}"
@@ -586,20 +534,6 @@ start_services() {
     done
     
     success "Neural interface services activated"
-}
-
-detect_wireguard_port() {
-    log "Detecting WireGuard configuration..."
-    echo -e "${CYAN}[CORE]: Scanning for quantum tunneling protocols...${NC}"
-    show_progress 2
-    
-    if [ -f "/etc/wireguard/wg0.conf" ]; then
-        WG_PORT=$(grep "ListenPort" /etc/wireguard/wg0.conf | awk '{print $3}')
-        log "Detected WireGuard port: $WG_PORT"
-        success "Quantum tunneling protocols detected"
-    else
-        error "WireGuard configuration not found." "exit"
-    fi
 }
 
 finalize_installation() {
