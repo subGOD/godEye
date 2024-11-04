@@ -86,10 +86,10 @@ function App() {
     }
   }, []);
 
-  const handleLogin = (username) => {
-    setIsAuthenticated(true);
-    localStorage.setItem('user', username);
-  };
+  const handleLogin = (user) => {
+  	setIsAuthenticated(true);
+  	localStorage.setItem('user', JSON.stringify(user));
+	};
 
   const handleLogout = () => {
     setIsAuthenticated(false);
