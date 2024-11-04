@@ -135,33 +135,6 @@ detect_wireguard_port() {
     fi
 }
 
-setup_system_user() {
-    log "Creating system user and setting permissions..."
-    echo -e "${CYAN}[CORE]: Configuring neural interface permissions...${NC}"
-    show_progress 2
-    
-    if ! id "godeye" &>/dev/null; then
-        useradd -r -s /bin/false godeye || error "Failed to create godeye user" "exit"
-        usermod -aG sudo godeye
-    fi
-    
-    # Create and set permissions for directories
-    rm -rf /opt/godeye
-    mkdir -p /opt/godeye
-    mkdir -p /var/log/godeye
-    
-    chown -R godeye:godeye /opt/godeye
-    chown -R godeye:godeye /var/log/godeye
-    chmod -R 755 /opt/godeye
-    chmod -R 644 /var/log/godeye
-
-    # Create npm configuration directory for godeye user
-    mkdir -p /home/godeye/.npm
-    chown -R godeye:godeye /home/godeye
-    
-    success "Neural interface permissions configured"
-}
-
 install_dependencies() {
     log "Installing required packages..."
     echo -e "${CYAN}[CORE]: Downloading neural enhancement modules...${NC}"
@@ -219,6 +192,33 @@ install_dependencies() {
     npm install -g node-gyp || error "Failed to install node-gyp" "exit"
     
     success "Neural enhancement modules installed"
+}
+
+setup_system_user() {
+    log "Creating system user and setting permissions..."
+    echo -e "${CYAN}[CORE]: Configuring neural interface permissions...${NC}"
+    show_progress 2
+    
+    if ! id "godeye" &>/dev/null; then
+        useradd -r -s /bin/false godeye || error "Failed to create godeye user" "exit"
+        usermod -aG sudo godeye
+    fi
+    
+    # Create and set permissions for directories
+    rm -rf /opt/godeye
+    mkdir -p /opt/godeye
+    mkdir -p /var/log/godeye
+    
+    chown -R godeye:godeye /opt/godeye
+    chown -R godeye:godeye /var/log/godeye
+    chmod -R 755 /opt/godeye
+    chmod -R 644 /var/log/godeye
+
+    # Create npm configuration directory for godeye user
+    mkdir -p /home/godeye/.npm
+    chown -R godeye:godeye /home/godeye
+    
+    success "Neural interface permissions configured"
 }
 
 create_admin_credentials() {
@@ -290,7 +290,7 @@ unsafe-perm=true
 legacy-peer-deps=true
 EOL
 
-    # Create Vite config with explicit NODE_ENV handling
+    # Create Vite config
     cat > vite.config.js << EOL
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -363,6 +363,7 @@ EOL
     
     if [ ! -d "dist" ]; then
         error "Build directory not created. Build failed." "exit"
+    }
 
     # Final permission adjustment
     chown -R godeye:godeye /opt/godeye
