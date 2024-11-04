@@ -1,210 +1,234 @@
 #!/bin/bash
 
-# Core variables and functions
+# Basic setup
+set -e
+
+# Core variables
 LOG_FILE="/var/log/godeye_install.log"
 ERROR_LOG_FILE="/var/log/godeye_error.log"
-COLOR_RED='\e[31m'
-COLOR_GREEN='\e[32m'
-COLOR_YELLOW='\e[33m'
-COLOR_BLUE='\e[34m'
-COLOR_CYAN='\e[38;5;123m'
-COLOR_NC='\e[0m'
 
-log() { echo -e "${COLOR_BLUE}[INFO]${COLOR_NC} $1"; }
-error() { echo -e "${COLOR_RED}[ERROR]${COLOR_NC} $1" && [[ "$2" == "exit" ]] && exit 1; }
-success() { echo -e "${COLOR_GREEN}[SUCCESS]${COLOR_NC} $1 ✓"; }
-warn() { echo -e "${COLOR_YELLOW}[WARN]${COLOR_NC} $1"; }
+# Color definitions
+RED='\e[31m'
+GREEN='\e[32m'
+YELLOW='\e[33m'
+BLUE='\e[34m'
+CYAN='\e[38;5;123m'
+NC='\e[0m'
 
-# Pre-installation checks
-check_prerequisites() {
-    [[ $EUID -ne 0 ]] && error "Please run as root" "exit"
-    [[ ! $(uname -m) =~ ^(aarch64|arm64|armv7l)$ ]] && error "Unsupported architecture" "exit"
-    [[ $(free -m | awk '/^Mem:/{print $2}') -lt 1024 ]] && error "Insufficient RAM" "exit"
-    [[ $(df -m /opt | awk 'NR==2 {print $4}') -lt 1024 ]] && error "Insufficient disk space" "exit"
-    command -v pivpn >/dev/null || error "PiVPN not found" "exit"
-    ping -c 1 google.com >/dev/null 2>&1 || error "No internet connection" "exit"
-    
-    # Detect WireGuard port
-    WG_PORT=$(grep "ListenPort" /etc/wireguard/wg0.conf | awk '{print $3}') || error "WireGuard config not found" "exit"
+# Core functions
+log() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1" >> "$LOG_FILE"
 }
 
-# Quick package installation
-install_packages() {
-    local packages=(curl nginx git redis-server ufw fail2ban python3 make g++)
+error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1" >> "$ERROR_LOG_FILE"
+    if [ "$2" = "exit" ]; then
+        exit 1
+    fi
+}
+
+success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1 ✓"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUCCESS] $1" >> "$LOG_FILE"
+}
+
+warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARN] $1" >> "$LOG_FILE"
+}
+
+check_requirements() {
+    log "Checking system requirements..."
     
-    apt-get update -y || error "Failed to update package list" "exit"
+    # Check for root
+    if [ "$EUID" -ne 0 ]; then 
+        error "Please run as root or with sudo" "exit"
+    fi
+
+    # Check architecture
+    ARCH=$(uname -m)
+    if [[ ! "$ARCH" =~ ^(aarch64|arm64|armv7l)$ ]]; then
+        error "Unsupported architecture: $ARCH. This script is designed for Raspberry Pi." "exit"
+    fi
+
+    # Check RAM
+    TOTAL_RAM=$(free -m | awk '/^Mem:/{print $2}')
+    if [ "$TOTAL_RAM" -lt 1024 ]; then
+        error "Insufficient RAM. Minimum 1GB required." "exit"
+    fi
+
+    # Check disk space
+    AVAILABLE_SPACE=$(df -m /opt | awk 'NR==2 {print $4}')
+    if [ "$AVAILABLE_SPACE" -lt 1024 ]; then
+        error "Insufficient disk space. Minimum 1GB required." "exit"
+    fi
+
+    # Check for PiVPN
+    if ! command -v pivpn &> /dev/null; then
+        error "PiVPN not found. Please install PiVPN first." "exit"
+    fi
+
+    # Check internet connection
+    if ! ping -c 1 google.com >/dev/null 2>&1; then
+        error "No internet connection detected" "exit"
+    fi
+
+    success "System requirements verified"
+}
+
+detect_wireguard() {
+    log "Detecting WireGuard configuration..."
     
-    # Install Node.js first (most time-consuming)
-    log "Installing Node.js (this may take several minutes)..."
-    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs build-essential || \
-    error "Failed to install Node.js" "exit"
-    
-    # Install other packages in parallel
+    if [ -f "/etc/wireguard/wg0.conf" ]; then
+        WG_PORT=$(grep "ListenPort" /etc/wireguard/wg0.conf | awk '{print $3}')
+        if [ -z "$WG_PORT" ]; then
+            error "WireGuard port not found in config" "exit"
+        fi
+        log "Detected WireGuard port: $WG_PORT"
+        success "WireGuard configuration detected"
+    else
+        error "WireGuard configuration not found." "exit"
+    fi
+}
+
+install_dependencies() {
     log "Installing required packages..."
-    for pkg in "${packages[@]}"; do
-        dpkg -l | grep -q "^ii  $pkg" || {
-            DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg" &
-        }
-    done
-    wait
     
+    # Update package list
+    apt-get update -y || error "Failed to update package list" "exit"
+
+    # Install curl if needed
+    if ! command -v curl &> /dev/null; then
+        apt-get install -y curl || error "Failed to install curl" "exit"
+    fi
+
+    # Setup Node.js repository
+    log "Setting up Node.js repository..."
+    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - || error "Failed to setup Node.js repository" "exit"
+    
+    # Install Node.js
+    log "Installing Node.js and npm..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs build-essential || error "Failed to install Node.js" "exit"
+
+    # Install other required packages
+    PACKAGES=(nginx git redis-server ufw fail2ban python3 make g++)
+    
+    for package in "${PACKAGES[@]}"; do
+        if ! dpkg -l | grep -q "^ii  $package"; then
+            log "Installing $package..."
+            DEBIAN_FRONTEND=noninteractive apt-get install -y "$package" || error "Failed to install $package" "exit"
+        fi
+    done
+
     # Update npm
-    npm install -g npm@latest node-gyp || error "Failed to update npm" "exit"
+    log "Updating npm..."
+    npm install -g npm@latest || error "Failed to update npm" "exit"
+    npm install -g node-gyp || error "Failed to install node-gyp" "exit"
+    
+    success "Required packages installed"
 }
 
-# Setup system user and directories
-setup_environment() {
-    # Create system user
-    id godeye &>/dev/null || useradd -r -s /bin/false godeye
-    usermod -aG sudo godeye
+setup_user() {
+    log "Setting up system user..."
     
-    # Setup directories
-    local dirs=("/opt/godeye" "/var/log/godeye" "/home/godeye/.npm")
-    for dir in "${dirs[@]}"; do
-        rm -rf "$dir"
-        mkdir -p "$dir"
-        chown -R godeye:godeye "$dir"
-        chmod -R 755 "$dir"
-    done
+    # Create godeye user if it doesn't exist
+    if ! id "godeye" &>/dev/null; then
+        useradd -r -s /bin/false godeye || error "Failed to create godeye user" "exit"
+        usermod -aG sudo godeye
+    fi
     
-    # Set credentials
+    # Create and set permissions for directories
+    mkdir -p /opt/godeye
+    mkdir -p /var/log/godeye
+    mkdir -p /home/godeye/.npm
+    
+    chown -R godeye:godeye /opt/godeye
+    chown -R godeye:godeye /var/log/godeye
+    chown -R godeye:godeye /home/godeye
+    
+    chmod -R 755 /opt/godeye
+    chmod -R 755 /var/log/godeye
+    
+    success "System user configured"
+}
+
+prepare_system() {
+    log "Preparing system..."
+    
+    # Clean up any existing installation
+    rm -rf /opt/godeye/*
+    
+    # Stop and remove existing services
+    systemctl stop godeye-api.service 2>/dev/null || true
+    systemctl stop godeye-frontend.service 2>/dev/null || true
+    rm -f /etc/systemd/system/godeye-api.service
+    rm -f /etc/systemd/system/godeye-frontend.service
+    systemctl daemon-reload
+    
+    # Set default credentials
     ADMIN_USER="admin"
     ADMIN_PASS="godEye2024!"
     JWT_SECRET=$(openssl rand -hex 32)
     REDIS_PASSWORD=$(openssl rand -hex 24)
+    
+    success "System prepared"
 }
 
-# Install and configure application
 setup_application() {
+    log "Setting up application..."
+    
     cd /opt/godeye || error "Failed to access installation directory" "exit"
     
-    # Clone and setup repository
+    # Clone repository
     git clone https://github.com/subGOD/godeye.git . || error "Failed to clone repository" "exit"
 
-    # Create npmrc file
-    cat > .npmrc << EOL
+    # Create npm config
+    cat > .npmrc << 'EOF'
 unsafe-perm=true
 legacy-peer-deps=true
 registry=https://registry.npmjs.org/
-EOL
-    
-    # Create configuration files
-    cat > .env << EOL
+EOF
+
+    # Create environment file
+    cat > .env << EOF
 VITE_ADMIN_USERNAME=$ADMIN_USER
 VITE_ADMIN_PASSWORD=$ADMIN_PASS
 VITE_WIREGUARD_PORT=$WG_PORT
 JWT_SECRET=$JWT_SECRET
 REDIS_PASSWORD=$REDIS_PASSWORD
-EOL
+EOF
 
-    # Create package.json if not in repo
-    if [ ! -f "package.json" ]; then
-        cat > package.json << EOL
-{
-  "name": "godeye",
-  "version": "1.0.0",
-  "description": "PiVPN Management Interface",
-  "main": "server.js",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview --host --port 3000"
-  },
-  "dependencies": {
-    "@heroicons/react": "^2.0.18",
-    "@tailwindcss/forms": "^0.5.7",
-    "axios": "^1.6.0",
-    "bcryptjs": "^2.4.3",
-    "express": "^4.18.2",
-    "jsonwebtoken": "^9.0.2",
-    "lucide-react": "^0.292.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "recharts": "^2.9.0",
-    "redis": "^4.6.10"
-  },
-  "devDependencies": {
-    "@types/react": "^18.2.15",
-    "@types/react-dom": "^18.2.7",
-    "@vitejs/plugin-react": "^4.0.3",
-    "autoprefixer": "^10.4.16",
-    "postcss": "^8.4.31",
-    "tailwindcss": "^3.3.5",
-    "vite": "^4.4.5"
-  }
-}
-EOL
-    fi
-
-    # Create Vite config
-    cat > vite.config.js << EOL
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    host: true,
-    port: 3000
-  },
-  build: {
-    outDir: 'dist',
-    chunkSizeWarningLimit: 1000
-  },
-  define: {
-    'process.env.NODE_ENV': '"production"'
-  }
-})
-EOL
-
-    # Create Tailwind config
-    cat > tailwind.config.js << EOL
-/** @type {import('tailwindcss').Config} */
-export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
-  theme: {
-    extend: {},
-  },
-  plugins: [
-    require('@tailwindcss/forms'),
-  ],
-}
-EOL
-    
-    # Install dependencies and build
-    log "Installing dependencies (this may take 10-15 minutes)..."
+    # Install dependencies
+    log "Installing Node.js dependencies..."
     npm install --no-audit --no-fund --legacy-peer-deps || error "Failed to install dependencies" "exit"
     
+    # Build application
     log "Building application..."
     NODE_ENV=production npm run build || error "Build failed" "exit"
     
-    [[ ! -d "dist" ]] && error "Build directory not created" "exit"
+    if [ ! -d "dist" ]; then
+        error "Build directory not created" "exit"
+    fi
     
     # Set permissions
     chown -R godeye:godeye /opt/godeye
     chmod 600 /opt/godeye/.env
+    chmod 600 /opt/godeye/.npmrc
+    
+    success "Application setup complete"
 }
 
-# Configure services and security
 setup_services() {
+    log "Setting up services..."
+    
     # Configure Redis
-    log "Configuring Redis..."
     sed -i "s/# requirepass foobared/requirepass $REDIS_PASSWORD/" /etc/redis/redis.conf
     systemctl restart redis-server
-    
-    # Remove any existing service files and unmask services
-    log "Setting up services..."
-    systemctl unmask godeye-api godeye-frontend 2>/dev/null || true
-    rm -f /etc/systemd/system/godeye-api.service
-    rm -f /etc/systemd/system/godeye-frontend.service
-    
+
     # Create API service
-    cat > "/etc/systemd/system/godeye-api.service" << EOL
+    cat > "/etc/systemd/system/godeye-api.service" << 'EOFAPI'
 [Unit]
 Description=godEye API Server
 After=network.target redis-server.service
@@ -224,10 +248,10 @@ StandardError=append:/var/log/godeye/api-error.log
 
 [Install]
 WantedBy=multi-user.target
-EOL
+EOFAPI
 
     # Create Frontend service
-    cat > "/etc/systemd/system/godeye-frontend.service" << EOL
+    cat > "/etc/systemd/system/godeye-frontend.service" << 'EOFFRONT'
 [Unit]
 Description=godEye Frontend
 After=network.target godeye-api.service
@@ -246,11 +270,10 @@ StandardError=append:/var/log/godeye/frontend-error.log
 
 [Install]
 WantedBy=multi-user.target
-EOL
+EOFFRONT
 
     # Configure Nginx
-    log "Configuring Nginx..."
-    cat > /etc/nginx/sites-available/godeye << EOL
+    cat > "/etc/nginx/sites-available/godeye" << 'EOFNGINX'
 server {
     listen 1337 default_server;
     client_max_body_size 50M;
@@ -264,95 +287,103 @@ server {
     location / {
         proxy_pass http://localhost:3000;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_cache_bypass \$http_upgrade;
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
     }
     
     location /api {
         proxy_pass http://localhost:3001;
         proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_cache_bypass \$http_upgrade;
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
     }
 }
-EOL
-    
+EOFNGINX
+
+    # Configure Nginx
     rm -f /etc/nginx/sites-enabled/default
     ln -sf /etc/nginx/sites-available/godeye /etc/nginx/sites-enabled/
     
-    # Configure security
+    # Configure firewall
     log "Configuring firewall..."
     ufw default deny incoming
     ufw default allow outgoing
     ufw allow ssh
     ufw allow 1337/tcp
-    ufw allow "$WG_PORT"/udp
+    ufw allow "${WG_PORT}"/udp
     echo "y" | ufw enable
-    
-    # Reload systemd and start services
+
+    # Start services
     log "Starting services..."
     systemctl daemon-reload
     
-    # Enable and start each service with proper error handling
-    local services=(redis-server godeye-api.service godeye-frontend.service nginx)
-    for svc in "${services[@]}"; do
-        log "Starting $svc..."
-        systemctl unmask "$svc" 2>/dev/null || true
-        systemctl enable "$svc" || warn "Failed to enable $svc"
-        systemctl restart "$svc" || error "Failed to start $svc" "exit"
-        
-        # Verify service is running
-        if ! systemctl is-active --quiet "$svc"; then
-            error "Service $svc failed to start. Check logs with: journalctl -u $svc" "exit"
-        fi
-    done
+    systemctl enable redis-server
+    systemctl restart redis-server
     
-    # Wait for services to be fully ready
-    log "Waiting for services to initialize..."
-    sleep 5
-}
-EOL
+    systemctl enable godeye-api.service
+    systemctl restart godeye-api.service
     
-    rm -f /etc/nginx/sites-enabled/default
-    ln -sf /etc/nginx/sites-available/godeye /etc/nginx/sites-enabled/
+    systemctl enable godeye-frontend.service
+    systemctl restart godeye-frontend.service
     
-    # Configure security
-    ufw default deny incoming
-    ufw default allow outgoing
-    ufw allow ssh
-    ufw allow 1337/tcp
-    ufw allow "$WG_PORT"/udp
-    echo "y" | ufw enable
-    
-    # Start services
-    systemctl daemon-reload
-    local services=(redis-server godeye-api godeye-frontend nginx)
-    for svc in "${services[@]}"; do
-        systemctl enable "$svc"
-        systemctl restart "$svc"
-    done
+    systemctl enable nginx
+    systemctl restart nginx
+
+    success "Services configured"
 }
 
-# Main installation sequence
-main() {
-    log "Starting installation..."
-    
-    check_prerequisites
-    install_packages
-    setup_environment
-    setup_application
-    setup_services
+verify_installation() {
+    log "Verifying installation..."
     
     IP_ADDRESS=$(hostname -I | awk '{print $1}')
-    if curl -s -o /dev/null -w "%{http_code}" "http://$IP_ADDRESS:1337"; then
-        success "Installation complete! Access at http://$IP_ADDRESS:1337"
-        log "Default credentials: admin / godEye2024!"
-        warn "IMPORTANT: Change your password after first login!"
+    
+    # Wait for services to start
+    sleep 5
+    
+    # Check if services are running
+    if systemctl is-active --quiet godeye-api.service && \
+       systemctl is-active --quiet godeye-frontend.service && \
+       systemctl is-active --quiet nginx; then
+        success "Installation complete"
+        
+        echo -e "\n${GREEN}╔════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${GREEN}║             godEye Installation Complete                ║${NC}"
+        echo -e "${GREEN}╚════════════════════════════════════════════════════════╝${NC}"
+        
+        echo -e "\n${CYAN}Access your installation at:${NC} http://${IP_ADDRESS}:1337"
+        echo -e "\n${CYAN}Default Credentials:${NC}"
+        echo -e "Username: admin"
+        echo -e "Password: godEye2024!"
+        echo -e "\n${RED}IMPORTANT: Change your password after first login!${NC}"
+        
+        echo -e "\n${CYAN}Useful Commands:${NC}"
+        echo -e "View logs: ${NC}sudo journalctl -u godeye-api -f"
+        echo -e "View frontend logs: ${NC}sudo journalctl -u godeye-frontend -f"
+        echo -e "Restart services: ${NC}sudo systemctl restart godeye-api godeye-frontend"
     else
-        error "Installation completed but service is not accessible"
+        error "Services failed to start properly. Check logs for details." "exit"
     fi
 }
 
-main "$@"
+main() {
+    # Initialize log files
+    touch "$LOG_FILE" "$ERROR_LOG_FILE"
+    chmod 644 "$LOG_FILE" "$ERROR_LOG_FILE"
+    
+    log "Starting installation..."
+    
+    # Run installation steps
+    check_requirements
+    detect_wireguard
+    install_dependencies
+    setup_user
+    prepare_system
+    setup_application
+    setup_services
+    verify_installation
+}
+
+# Start installation
+main
