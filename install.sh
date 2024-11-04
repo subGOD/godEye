@@ -81,6 +81,13 @@ setup_application() {
     
     # Clone and setup repository
     git clone https://github.com/subGOD/godeye.git . || error "Failed to clone repository" "exit"
+
+    # Create npmrc file
+    cat > .npmrc << EOL
+unsafe-perm=true
+legacy-peer-deps=true
+registry=https://registry.npmjs.org/
+EOL
     
     # Create configuration files
     cat > .env << EOL
@@ -90,10 +97,90 @@ VITE_WIREGUARD_PORT=$WG_PORT
 JWT_SECRET=$JWT_SECRET
 REDIS_PASSWORD=$REDIS_PASSWORD
 EOL
+
+    # Create package.json if not in repo
+    if [ ! -f "package.json" ]; then
+        cat > package.json << EOL
+{
+  "name": "godeye",
+  "version": "1.0.0",
+  "description": "PiVPN Management Interface",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --host --port 3000"
+  },
+  "dependencies": {
+    "@heroicons/react": "^2.0.18",
+    "@tailwindcss/forms": "^0.5.7",
+    "axios": "^1.6.0",
+    "bcryptjs": "^2.4.3",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.292.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "recharts": "^2.9.0",
+    "redis": "^4.6.10"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.15",
+    "@types/react-dom": "^18.2.7",
+    "@vitejs/plugin-react": "^4.0.3",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.31",
+    "tailwindcss": "^3.3.5",
+    "vite": "^4.4.5"
+  }
+}
+EOL
+    fi
+
+    # Create Vite config
+    cat > vite.config.js << EOL
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    host: true,
+    port: 3000
+  },
+  build: {
+    outDir: 'dist',
+    chunkSizeWarningLimit: 1000
+  },
+  define: {
+    'process.env.NODE_ENV': '"production"'
+  }
+})
+EOL
+
+    # Create Tailwind config
+    cat > tailwind.config.js << EOL
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {},
+  },
+  plugins: [
+    require('@tailwindcss/forms'),
+  ],
+}
+EOL
     
     # Install dependencies and build
-    log "Installing dependencies and building (this may take 10-15 minutes)..."
-    npm install --no-audit --no-fund --network-timeout 100000 && \
+    log "Installing dependencies (this may take 10-15 minutes)..."
+    npm install --no-audit --no-fund --legacy-peer-deps || error "Failed to install dependencies" "exit"
+    
+    log "Building application..."
     NODE_ENV=production npm run build || error "Build failed" "exit"
     
     [[ ! -d "dist" ]] && error "Build directory not created" "exit"
