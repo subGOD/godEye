@@ -208,7 +208,6 @@ EOF
         log "ERROR" "Build directory not created"
         return 1
     fi
-    }
     
     chown -R "$APP_USER:$APP_GROUP" "$INSTALL_DIR"
     chmod 600 "$INSTALL_DIR/.env"
