@@ -193,16 +193,21 @@ EOL
 # Configure services and security
 setup_services() {
     # Configure Redis
+    log "Configuring Redis..."
     sed -i "s/# requirepass foobared/requirepass $REDIS_PASSWORD/" /etc/redis/redis.conf
     systemctl restart redis-server
     
-    # Create service files
-    local services=(api frontend)
-    for svc in "${services[@]}"; do
-        cat > "/etc/systemd/system/godeye-${svc}.service" << EOL
+    # Remove any existing service files and unmask services
+    log "Setting up services..."
+    systemctl unmask godeye-api godeye-frontend 2>/dev/null || true
+    rm -f /etc/systemd/system/godeye-api.service
+    rm -f /etc/systemd/system/godeye-frontend.service
+    
+    # Create API service
+    cat > "/etc/systemd/system/godeye-api.service" << EOL
 [Unit]
-Description=godEye ${svc^}
-After=network.target
+Description=godEye API Server
+After=network.target redis-server.service
 Wants=redis-server.service
 
 [Service]
@@ -210,18 +215,41 @@ Type=simple
 User=godeye
 WorkingDirectory=/opt/godeye
 Environment=NODE_ENV=production
-Environment=PORT=${svc == "api" && echo "3001" || echo "3000"}
-ExecStart=/usr/bin/${svc == "api" && echo "node server.js" || echo "npm run preview -- --port 3000"}
+Environment=PORT=3001
+ExecStart=/usr/bin/node server.js
 Restart=always
-StandardOutput=append:/var/log/godeye/${svc}.log
-StandardError=append:/var/log/godeye/${svc}-error.log
+RestartSec=10
+StandardOutput=append:/var/log/godeye/api.log
+StandardError=append:/var/log/godeye/api-error.log
 
 [Install]
 WantedBy=multi-user.target
 EOL
-    done
-    
+
+    # Create Frontend service
+    cat > "/etc/systemd/system/godeye-frontend.service" << EOL
+[Unit]
+Description=godEye Frontend
+After=network.target godeye-api.service
+Wants=godeye-api.service
+
+[Service]
+Type=simple
+User=godeye
+WorkingDirectory=/opt/godeye
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm run preview -- --port 3000
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/godeye/frontend.log
+StandardError=append:/var/log/godeye/frontend-error.log
+
+[Install]
+WantedBy=multi-user.target
+EOL
+
     # Configure Nginx
+    log "Configuring Nginx..."
     cat > /etc/nginx/sites-available/godeye << EOL
 server {
     listen 1337 default_server;
@@ -248,6 +276,42 @@ server {
         proxy_set_header Host \$host;
         proxy_cache_bypass \$http_upgrade;
     }
+}
+EOL
+    
+    rm -f /etc/nginx/sites-enabled/default
+    ln -sf /etc/nginx/sites-available/godeye /etc/nginx/sites-enabled/
+    
+    # Configure security
+    log "Configuring firewall..."
+    ufw default deny incoming
+    ufw default allow outgoing
+    ufw allow ssh
+    ufw allow 1337/tcp
+    ufw allow "$WG_PORT"/udp
+    echo "y" | ufw enable
+    
+    # Reload systemd and start services
+    log "Starting services..."
+    systemctl daemon-reload
+    
+    # Enable and start each service with proper error handling
+    local services=(redis-server godeye-api.service godeye-frontend.service nginx)
+    for svc in "${services[@]}"; do
+        log "Starting $svc..."
+        systemctl unmask "$svc" 2>/dev/null || true
+        systemctl enable "$svc" || warn "Failed to enable $svc"
+        systemctl restart "$svc" || error "Failed to start $svc" "exit"
+        
+        # Verify service is running
+        if ! systemctl is-active --quiet "$svc"; then
+            error "Service $svc failed to start. Check logs with: journalctl -u $svc" "exit"
+        fi
+    done
+    
+    # Wait for services to be fully ready
+    log "Waiting for services to initialize..."
+    sleep 5
 }
 EOL
     
