@@ -1,5 +1,19 @@
 #!/bin/bash
 
+# Print cyberpunk header
+echo -e "\e[38;5;51m"
+cat << "EOF"
+ ▄▄ •       ·▄▄▄▄  ▄▄▄ . ▄· ▄▌▄▄▄ .
+▐█ ▀ ▪▪     ██▪ ██ ▀▄.▀·▐█▪██▌▀▄.▀·
+▄█ ▀█▄ ▄█▀▄ ▐█· ▐█▌▐▀▀▪▄▐█▌▐█▪▐▀▀▪▄
+▐█▄▪▐█▐█▌.▐▌██. ██ ▐█▄▄▌ ▐█▀·.▐█▄▄▌
+·▀▀▀▀  ▀█▄▀▪▀▀▀▀▀•  ▀▀▀   ▀ •  ▀▀▀ 
+EOF
+echo -e "\e[38;5;39m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
+echo -e "\e[38;5;51m      PiVPN Management & Monitoring System\e[0m"
+echo -e "\e[38;5;39m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
+echo ""
+
 # Enable error tracing and exit on error
 set -eE
 
@@ -39,6 +53,58 @@ error_handler() {
 }
 
 trap 'error_handler ${LINENO} $?' ERR
+
+# Function to fix package manager issues
+fix_package_manager() {
+    log "INFO" "Checking and fixing package manager..."
+    
+    # Kill any stuck package manager processes
+    pkill -9 apt-get >/dev/null 2>&1 || true
+    pkill -9 dpkg >/dev/null 2>&1 || true
+    
+    # Remove locks
+    rm -f /var/lib/apt/lists/lock
+    rm -f /var/cache/apt/archives/lock
+    rm -f /var/lib/dpkg/lock*
+    
+    # Fix potentially broken installations
+    dpkg --configure -a
+    
+    # Clean package manager
+    apt-get clean
+    apt-get autoclean
+    
+    # Update sources list for both Buster and Bullseye compatibility
+    cat > /etc/apt/sources.list << 'EOFAPT'
+deb http://archive.raspberrypi.org/debian/ bullseye main
+deb http://raspbian.raspberrypi.org/raspbian/ bullseye main contrib non-free rpi
+EOFAPT
+
+    # Update package lists with multiple retries and error checking
+    for i in {1..3}; do
+        if apt-get update -y 2>/tmp/apt-error.log; then
+            # Force update the package cache
+            apt-get update --fix-missing -y
+            apt-get install -f -y
+            log "SUCCESS" "Package manager fixed successfully"
+            return 0
+        else
+            error_msg=$(cat /tmp/apt-error.log)
+            log "WARN" "Package update attempt $i failed: $error_msg"
+            
+            # Try to fix common issues
+            if echo "$error_msg" | grep -q "NO_PUBKEY"; then
+                key=$(echo "$error_msg" | grep -o '[A-F0-9]\{16\}')
+                apt-key adv --keyserver keyserver.ubuntu.com --recv-keys "$key" || true
+            fi
+            
+            sleep 5
+        fi
+    done
+    
+    log "ERROR" "Failed to fix package manager"
+    return 1
+}
 
 init_logging() {
     mkdir -p /var/log/godeye
@@ -87,19 +153,20 @@ check_requirements() {
         exit 1
     fi
 
-    ARCH=$(uname -m)
-    if [[ ! "$ARCH" =~ ^(aarch64|arm64|armv7l)$ ]]; then
+    # Get the actual architecture
+    ARCH=$(dpkg --print-architecture)
+    if [[ ! "$ARCH" =~ ^(arm64|armhf)$ ]]; then
         log "ERROR" "Unsupported architecture: $ARCH. This script is designed for Raspberry Pi."
         exit 1
     fi
 
-    local total_ram=$(free -m | awk '/^Mem:/{print $2}')
+    local total_ram=$(free -m | awk "/^Mem:/{print \$2}")
     if [ "$total_ram" -lt 1024 ]; then
         log "ERROR" "Insufficient RAM. Minimum 1GB required."
         exit 1
     fi
 
-    local available_space=$(df -m /opt | awk 'NR==2 {print $4}')
+    local available_space=$(df -m /opt | awk "NR==2 {print \$4}")
     if [ "$available_space" -lt 1024 ]; then
         log "ERROR" "Insufficient disk space. Minimum 1GB required."
         exit 1
@@ -108,211 +175,64 @@ check_requirements() {
     log "SUCCESS" "System requirements verified"
 }
 
-install_nginx() {
-    log "INFO" "Installing and configuring Nginx..."
-
-    # Stop any existing web servers
-    local web_servers=(apache2 nginx)
-    for service in "${web_servers[@]}"; do
-        if systemctl is-active --quiet "$service"; then
-            log "INFO" "Stopping $service..."
-            systemctl stop "$service"
-            systemctl disable "$service"
-        fi
-    done
-
-    # Check for and kill any processes using port 80
-    if netstat -tuln | grep -q ":80 "; then
-        log "WARN" "Port 80 is in use. Attempting to free it..."
-        local pid=$(lsof -t -i:80)
-        if [ ! -z "$pid" ]; then
-            kill -9 $pid
-            sleep 2
-        fi
-    fi
-
-    # Remove existing Nginx completely
-    log "INFO" "Removing existing Nginx installation..."
-    apt-get remove --purge -y nginx nginx-common nginx-full >/dev/null 2>&1 || true
-    apt-get autoremove -y >/dev/null 2>&1 || true
-    
-    # Clean up Nginx directories
-    rm -rf /etc/nginx
-    rm -rf /var/log/nginx
-    rm -rf /var/lib/nginx
-    
-    # Create fresh directories
-    mkdir -p /etc/nginx/sites-available
-    mkdir -p /etc/nginx/sites-enabled
-    mkdir -p /var/log/nginx
-    
-    # Fresh install of Nginx
-    log "INFO" "Installing Nginx..."
-    DEBIAN_FRONTEND=noninteractive apt-get install -y nginx || {
-        log "ERROR" "Failed to install Nginx. Checking apt logs..."
-        cat /var/log/apt/term.log >> "$ERROR_LOG_FILE"
-        return 1
-    }
-
-    # Configure Nginx
-    cat > "/etc/nginx/sites-available/godeye" << EOF
-server {
-    listen $NGINX_PORT default_server;
-    listen [::]:$NGINX_PORT default_server;
-    server_name _;
-    
-    client_max_body_size 50M;
-    
-    # Security headers
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    
-    location / {
-        proxy_pass http://localhost:$FRONTEND_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_cache_bypass \$http_upgrade;
-    }
-    
-    location /api {
-        proxy_pass http://localhost:$APP_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_cache_bypass \$http_upgrade;
-    }
-
-    access_log /var/log/nginx/godeye.access.log;
-    error_log /var/log/nginx/godeye.error.log;
-}
-EOF
-
-    # Configure main nginx.conf
-    cat > "/etc/nginx/nginx.conf" << 'EOF'
-user www-data;
-worker_processes auto;
-pid /run/nginx.pid;
-include /etc/nginx/modules-enabled/*.conf;
-
-events {
-    worker_connections 768;
-    multi_accept on;
-}
-
-http {
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
-    keepalive_timeout 65;
-    types_hash_max_size 2048;
-    server_tokens off;
-
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
-
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers on;
-
-    access_log /var/log/nginx/access.log;
-    error_log /var/log/nginx/error.log;
-
-    gzip on;
-
-    include /etc/nginx/conf.d/*.conf;
-    include /etc/nginx/sites-enabled/*;
-}
-EOF
-
-    # Remove default site and enable godEye site
-    rm -f /etc/nginx/sites-enabled/default
-    ln -sf /etc/nginx/sites-available/godeye /etc/nginx/sites-enabled/
-
-    # Set permissions
-    chown -R www-data:www-data /var/log/nginx
-    chmod -R 755 /var/log/nginx
-
-    # Test Nginx configuration
-    nginx -t || {
-        log "ERROR" "Nginx configuration test failed"
-        cat /var/log/nginx/error.log >> "$ERROR_LOG_FILE"
-        return 1
-    }
-
-    # Start Nginx
-    systemctl start nginx || {
-        log "ERROR" "Failed to start Nginx"
-        journalctl -u nginx --no-pager -n 50 >> "$ERROR_LOG_FILE"
-        return 1
-    }
-
-    log "SUCCESS" "Nginx installed and configured successfully"
-    return 0
-}
-
 install_dependencies() {
     log "INFO" "Installing dependencies..."
     
     # Update package list with retry mechanism
-    log "INFO" "Updating package lists..."
-    for i in {1..3}; do
-        if apt-get update -y; then
-            break
-        else
-            log "WARN" "Attempt $i to update package lists failed, retrying..."
-            sleep 5
-        fi
-    done
-
-    # Install prerequisites
-    log "INFO" "Installing prerequisites..."
-    DEBIAN_FRONTEND=noninteractive apt-get install -y curl gnupg2 ca-certificates build-essential || {
-        log "ERROR" "Failed to install prerequisites"
+    if ! fix_package_manager; then
+        log "ERROR" "Failed to fix package manager"
         return 1
     }
 
-    # Node.js installation
+    # Install prerequisites with better error handling
+    log "INFO" "Installing prerequisites..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --fix-missing \
+        curl \
+        gnupg2 \
+        ca-certificates \
+        build-essential \
+        git \
+        apt-transport-https || {
+        log "ERROR" "Failed to install prerequisites"
+        error_msg=$(apt-get install -y curl gnupg2 ca-certificates build-essential git 2>&1)
+        log "ERROR" "Installation error details: $error_msg"
+        # Try to fix broken packages
+        apt-get --fix-broken install -y
+        return 1
+    }
+
+    # Node.js installation with fallback methods
     if ! command -v node &> /dev/null; then
         log "INFO" "Installing Node.js..."
         
-        # Remove any existing Node.js installations
-        apt-get remove -y nodejs npm &>/dev/null || true
-        rm -rf /etc/apt/sources.list.d/nodesource* &>/dev/null || true
-        
-        # Add Node.js repository manually with proper error handling
-        log "INFO" "Adding NodeSource repository..."
-        if ! curl -fsSL https://deb.nodesource.com/gpgkey/nodesource.gpg.key | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg; then
-            log "ERROR" "Failed to download and import NodeSource GPG key"
+        # Method 1: NodeSource repository
+        if curl -fsSL https://deb.nodesource.com/setup_18.x | bash - ; then
+            DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs || {
+                log "WARN" "Standard Node.js installation failed, trying alternative method..."
+                # Method 2: Direct binary installation
+                NODE_VERSION="v18.18.2"
+                ARCH=$(dpkg --print-architecture)
+                if [[ "$ARCH" == "armhf" ]]; then
+                    NODE_ARCH="armv7l"
+                else
+                    NODE_ARCH="arm64"
+                fi
+                
+                curl -o /tmp/node.tar.xz "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" || {
+                    log "ERROR" "Failed to download Node.js binary"
+                    return 1
+                }
+                
+                cd /tmp
+                tar -xf node.tar.xz
+                cd "node-${NODE_VERSION}-linux-${NODE_ARCH}"
+                cp -R * /usr/local/
+                cd ..
+                rm -rf "node-${NODE_VERSION}-linux-${NODE_ARCH}" node.tar.xz
+            }
+        else
+            log "ERROR" "Failed to setup Node.js repository"
             return 1
-        fi
-        
-        echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_18.x buster main" > /etc/apt/sources.list.d/nodesource.list
-        echo "deb-src [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_18.x buster main" >> /etc/apt/sources.list.d/nodesource.list
-        
-        # Update package list after adding repository
-        log "INFO" "Updating package list with Node.js repository..."
-        apt-get update -y || {
-            log "ERROR" "Failed to update package list after adding Node.js repository"
-            return 1
-        }
-        
-        # Install Node.js with fallback method
-        log "INFO" "Installing Node.js packages..."
-        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs; then
-            log "WARN" "Standard Node.js installation failed. Trying alternative method..."
-            
-            # Alternative installation using n
-            if ! curl -L https://raw.githubusercontent.com/tj/n/master/bin/n -o /usr/local/bin/n; then
-                log "ERROR" "Failed to download n"
-                return 1
-            fi
-            chmod +x /usr/local/bin/n
-            if ! n 18; then
-                log "ERROR" "Alternative Node.js installation failed"
-                return 1
-            fi
         fi
         
         # Verify Node.js installation
@@ -327,479 +247,265 @@ install_dependencies() {
         local current_version=$(node -v)
         log "INFO" "Node.js is already installed (Version: $current_version)"
     fi
+}
 
-    # Install Redis Server
-    log "INFO" "Installing Redis..."
-    DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server || {
-        log "ERROR" "Failed to install Redis"
-        return 1
-    }
+setup_environment() {
+    log "INFO" "Setting up environment..."
 
-    # Configure Redis for better security
-    sed -i 's/^# requirepass.*/requirepass/' /etc/redis/redis.conf
-    sed -i 's/^bind 127.0.0.1.*/bind 127.0.0.1/' /etc/redis/redis.conf
-    systemctl restart redis-server
+    # Create application user and group if they don't exist
+    if ! getent group "$APP_GROUP" >/dev/null; then
+        groupadd "$APP_GROUP"
+    fi
+    
+    if ! getent passwd "$APP_USER" >/dev/null; then
+        useradd -m -g "$APP_GROUP" -s /bin/bash "$APP_USER"
+    fi
 
-    # Install remaining required packages
-    local packages=(ufw fail2ban python3 git)
-    for package in "${packages[@]}"; do
-        if ! dpkg -l | grep -q "^ii  $package"; then
-            log "INFO" "Installing $package..."
-            DEBIAN_FRONTEND=noninteractive apt-get install -y "$package" || {
-                log "ERROR" "Failed to install $package"
+    # Create and set permissions for installation directory
+    mkdir -p "$INSTALL_DIR"
+    chown -R "$APP_USER:$APP_GROUP" "$INSTALL_DIR"
+    chmod 755 "$INSTALL_DIR"
+
+    # Create logs directory if it doesn't exist
+    mkdir -p /var/log/godeye
+    chown -R "$APP_USER:$APP_GROUP" /var/log/godeye
+    chmod 755 /var/log/godeye
+
+    log "SUCCESS" "Environment setup completed"
+}
+
+install_global_packages() {
+    log "INFO" "Installing required global npm packages..."
+    
+    # Install PM2 globally with retry mechanism
+    for i in {1..3}; do
+        if npm install -g pm2@latest; then
+            log "SUCCESS" "PM2 installed successfully"
+            break
+        else
+            log "WARN" "PM2 installation attempt $i failed, retrying..."
+            sleep 5
+            if [ $i -eq 3 ]; then
+                log "ERROR" "Failed to install PM2"
                 return 1
-            }
+            fi
         fi
     done
 
-    # Install and configure Nginx
-    install_nginx || {
-        log "ERROR" "Nginx installation failed"
+    # Save PM2 path for systemd
+    PM2_PATH=$(which pm2)
+    if [ -z "$PM2_PATH" ]; then
+        log "ERROR" "PM2 binary not found"
         return 1
-    }
-
-    # Update npm and install global packages
-    log "INFO" "Updating npm..."
-    npm install -g npm@latest || {
-        log "ERROR" "Failed to update npm"
-        return 1
-    }
-
-    log "INFO" "Installing required global npm packages..."
-    npm install -g bcrypt winston express-rate-limit helmet || {
-        log "ERROR" "Failed to install required npm packages"
-        return 1
-    }
-
-    log "SUCCESS" "All dependencies installed successfully"
-    return 0
-}
-
-setup_user() {
-    log "INFO" "Setting up system user..."
-    
-    # Create group if it doesn't exist
-    if ! getent group "$APP_GROUP" >/dev/null; then
-        groupadd "$APP_GROUP" || {
-            log "ERROR" "Failed to create group $APP_GROUP"
-            return 1
-        }
-        log "INFO" "Created group $APP_GROUP"
     fi
 
-    # Create user if it doesn't exist
-    if ! id "$APP_USER" &>/dev/null; then
-        useradd -r -g "$APP_GROUP" -d "/home/$APP_USER" -s /bin/false "$APP_USER" || {
-            log "ERROR" "Failed to create user $APP_USER"
-            return 1
-        }
-        log "INFO" "Created user $APP_USER"
-    fi
-
-    # Create required directories
-    local directories=(
-        "$INSTALL_DIR"
-        "/var/log/godeye"
-        "/home/$APP_USER"
-        "/home/$APP_USER/.npm"
-    )
-
-    for dir in "${directories[@]}"; do
-        mkdir -p "$dir" || {
-            log "ERROR" "Failed to create directory $dir"
-            return 1
-        }
-        log "INFO" "Created directory $dir"
-    done
-
-    # Set ownership
-    local owned_paths=(
-        "$INSTALL_DIR"
-        "/var/log/godeye"
-        "/home/$APP_USER"
-    )
-
-    for path in "${owned_paths[@]}"; do
-        chown -R "$APP_USER:$APP_GROUP" "$path" || {
-            log "ERROR" "Failed to set ownership for $path"
-            return 1
-        }
-        chmod -R 755 "$path" || {
-            log "ERROR" "Failed to set permissions for $path"
-            return 1
-        }
-        log "INFO" "Set permissions for $path"
-    done
-
-    log "SUCCESS" "System user configured"
-    return 0
+    log "SUCCESS" "Global packages installed successfully"
 }
 
-setup_application() {
-    log "INFO" "Setting up application..."
+clone_repository() {
+    log "INFO" "Cloning godEye repository..."
     
-    # Change to installation directory
-    cd "$INSTALL_DIR" || {
-        log "ERROR" "Failed to access installation directory"
+    # Ensure git is installed
+    if ! command -v git &> /dev/null; then
+        log "ERROR" "Git is not installed"
         return 1
     }
-    
-    # Clean any existing installation
-    log "INFO" "Cleaning existing installation..."
-    rm -rf "$INSTALL_DIR"/* || {
-        log "ERROR" "Failed to clean installation directory"
-        return 1
-    }
-    
-    # Clone repository
-    log "INFO" "Cloning repository..."
-    git clone https://github.com/subGOD/godeye.git . || {
+
+    # Remove existing directory if it exists
+    if [ -d "$INSTALL_DIR" ]; then
+        rm -rf "$INSTALL_DIR"
+    fi
+
+    # Clone the repository
+    if git clone https://github.com/subGOD/godEye.git "$INSTALL_DIR"; then
+        cd "$INSTALL_DIR"
+        chown -R "$APP_USER:$APP_GROUP" .
+        log "SUCCESS" "Repository cloned successfully"
+    else
         log "ERROR" "Failed to clone repository"
         return 1
-    }
+    fi
+}
 
-    # Configure npm
-    log "INFO" "Configuring npm..."
-    cat > .npmrc << 'EOF'
-unsafe-perm=true
-legacy-peer-deps=true
-registry=https://registry.npmjs.org/
-EOF
-
-    # Generate secure secrets
-    log "INFO" "Generating security credentials..."
-    local jwt_secret=$(openssl rand -base64 32)
-    local redis_pass=$(openssl rand -base64 24)
-
-    # Create environment file
-    log "INFO" "Creating environment configuration..."
-    cat > .env << EOF
-JWT_SECRET="$jwt_secret"
-REDIS_PASSWORD="$redis_pass"
-PORT=$APP_PORT
+setup_environment_variables() {
+    log "INFO" "Setting up environment variables..."
+    
+    # Generate random secure strings for secrets
+    JWT_SECRET=$(openssl rand -hex 32)
+    REDIS_PASSWORD=$(openssl rand -hex 16)
+    
+    # Create .env file
+    cat > "$INSTALL_DIR/.env" << EOF
 NODE_ENV=production
+PORT=$APP_PORT
+FRONTEND_PORT=$FRONTEND_PORT
+NGINX_PORT=$NGINX_PORT
+JWT_SECRET=$JWT_SECRET
+REDIS_PASSWORD=$REDIS_PASSWORD
 EOF
 
-    # Install project dependencies
-    log "INFO" "Installing project dependencies..."
-    npm install --no-audit --no-fund --legacy-peer-deps \
-        bcrypt \
-        winston \
-        express-rate-limit \
-        helmet \
-        cors \
-        express \
-        jsonwebtoken \
-        ioredis || {
-        log "ERROR" "Failed to install project dependencies"
-        return 1
-    }
-    
-    # Build application
-    log "INFO" "Building application..."
-    NODE_ENV=production npm run build || {
-        log "ERROR" "Build failed"
-        cat npm-debug.log >> "$ERROR_LOG_FILE"
-        return 1
-    }
-    
-    # Verify build
-    if [ ! -d "dist" ]; then
-        log "ERROR" "Build directory not created"
-        return 1
-    fi
-    
-    # Set permissions
-    log "INFO" "Setting application permissions..."
-    chown -R "$APP_USER:$APP_GROUP" "$INSTALL_DIR"
+    chown "$APP_USER:$APP_GROUP" "$INSTALL_DIR/.env"
     chmod 600 "$INSTALL_DIR/.env"
-    chmod 600 "$INSTALL_DIR/.npmrc"
-    chmod -R 755 "$INSTALL_DIR/dist"
     
-    # Store Redis password for service configuration
-    REDIS_PASSWORD="$redis_pass"
-    
-    log "SUCCESS" "Application setup complete"
-    return 0
+    log "SUCCESS" "Environment variables configured"
 }
 
-setup_services() {
-    log "INFO" "Configuring services..."
-
-    # Configure Redis
-    log "INFO" "Configuring Redis..."
-    if [ -f "/etc/redis/redis.conf" ]; then
-        sed -i "s/# requirepass foobared/requirepass $REDIS_PASSWORD/" /etc/redis/redis.conf
-        systemctl restart redis-server || {
-            log "ERROR" "Failed to restart Redis"
-            journalctl -u redis-server --no-pager -n 50 >> "$ERROR_LOG_FILE"
-            return 1
-        }
-    else
-        log "ERROR" "Redis configuration file not found"
-        return 1
-    fi
-
-    # API Service
-    log "INFO" "Creating API service..."
-    cat > "/etc/systemd/system/godeye-api.service" << EOF
-[Unit]
-Description=godEye API Server
-After=network.target redis-server.service
-Wants=redis-server.service
-
-[Service]
-Type=simple
-User=$APP_USER
-Group=$APP_GROUP
-WorkingDirectory=$INSTALL_DIR
-EnvironmentFile=$INSTALL_DIR/.env
-ExecStart=/usr/bin/node server.js
-Restart=always
-RestartSec=10
-StandardOutput=append:/var/log/godeye/api.log
-StandardError=append:/var/log/godeye/api-error.log
-LimitNOFILE=10000
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    # Frontend Service
-    log "INFO" "Creating frontend service..."
-    cat > "/etc/systemd/system/godeye-frontend.service" << EOF
-[Unit]
-Description=godEye Frontend
-After=network.target godeye-api.service
-Wants=godeye-api.service
-
-[Service]
-Type=simple
-User=$APP_USER
-Group=$APP_GROUP
-WorkingDirectory=$INSTALL_DIR
-EnvironmentFile=$INSTALL_DIR/.env
-ExecStart=/usr/bin/npm run preview -- --port $FRONTEND_PORT --host
-Restart=always
-RestartSec=10
-StandardOutput=append:/var/log/godeye/frontend.log
-StandardError=append:/var/log/godeye/frontend-error.log
-LimitNOFILE=10000
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    # Set proper permissions for service files
-    chmod 644 /etc/systemd/system/godeye-api.service
-    chmod 644 /etc/systemd/system/godeye-frontend.service
-
-    # Configure firewall
-    log "INFO" "Configuring firewall..."
-    if command -v ufw >/dev/null 2>&1; then
-        ufw default deny incoming
-        ufw default allow outgoing
-        ufw allow ssh
-        ufw allow $NGINX_PORT/tcp
-        ufw --force enable
-    else
-        log "WARN" "UFW not found, skipping firewall configuration"
-    fi
-
-    # Reload systemd and start services
-    log "INFO" "Starting services..."
-    systemctl daemon-reload
-
-    local services=(redis-server godeye-api godeye-frontend nginx)
-    for service in "${services[@]}"; do
-        log "INFO" "Enabling and starting $service..."
-        systemctl enable "$service"
-        systemctl restart "$service" || {
-            log "ERROR" "Failed to start $service"
-            journalctl -u "$service" --no-pager -n 50 >> "$ERROR_LOG_FILE"
-            return 1
-        }
-        log "SUCCESS" "Service $service started"
-    done
-
-    # Verify all services are running
-    for service in "${services[@]}"; do
-        if ! systemctl is-active --quiet "$service"; then
-            log "ERROR" "Service $service failed to start"
-            return 1
-        fi
-    done
-
-    log "SUCCESS" "All services configured and started"
-    return 0
-}
-
-verify_installation() {
-    log "INFO" "Verifying installation..."
+install_application() {
+    log "INFO" "Installing application dependencies..."
     
-    local failed=0
+    cd "$INSTALL_DIR"
     
-    # Verify system user and group
-    if ! id "$APP_USER" >/dev/null 2>&1; then
-        log "ERROR" "System user $APP_USER does not exist"
-        failed=1
-    fi
-
-    if ! getent group "$APP_GROUP" >/dev/null 2>&1; then
-        log "ERROR" "System group $APP_GROUP does not exist"
-        failed=1
-    fi
-    
-    # Verify services
-    local services=(redis-server godeye-api godeye-frontend nginx)
-    for service in "${services[@]}"; do
-        log "INFO" "Checking service: $service"
-        if ! systemctl is-active --quiet "$service"; then
-            log "ERROR" "Service $service is not running"
-            journalctl -u "$service" --no-pager -n 50 >> "$ERROR_LOG_FILE"
-            failed=1
+    # Install dependencies with retry mechanism
+    for i in {1..3}; do
+        if su "$APP_USER" -c "npm install --production"; then
+            log "SUCCESS" "Application dependencies installed"
+            break
         else
-            log "SUCCESS" "Service $service is running"
-        fi
-    done
-
-    # Verify ports
-    local ports=($APP_PORT $FRONTEND_PORT $NGINX_PORT)
-    for port in "${ports[@]}"; do
-        log "INFO" "Checking port: $port"
-        if ! netstat -tuln | grep -q ":$port "; then
-            log "ERROR" "Port $port is not listening"
-            failed=1
-        else
-            log "SUCCESS" "Port $port is listening"
-        fi
-    done
-
-    # Verify Redis connection
-    log "INFO" "Verifying Redis connection..."
-    if ! redis-cli ping > /dev/null 2>&1; then
-        log "ERROR" "Redis connection failed"
-        failed=1
-    else
-        log "SUCCESS" "Redis connection verified"
-    fi
-
-    # Verify Nginx configuration
-    log "INFO" "Verifying Nginx configuration..."
-    if ! nginx -t >/dev/null 2>&1; then
-        log "ERROR" "Nginx configuration test failed"
-        nginx -t >> "$ERROR_LOG_FILE" 2>&1
-        failed=1
-    else
-        log "SUCCESS" "Nginx configuration verified"
-    fi
-
-    # Verify API health
-    log "INFO" "Verifying API health..."
-    if ! curl -s "http://localhost:$APP_PORT/api/setup/status" >/dev/null; then
-        log "ERROR" "API health check failed"
-        failed=1
-    else
-        log "SUCCESS" "API health verified"
-    fi
-
-    # Final verification result
-    if [ $failed -eq 1 ]; then
-        log "ERROR" "Installation verification failed"
-        return 1
-    fi
-
-    local ip_address=$(hostname -I | awk '{print $1}')
-    
-    log "SUCCESS" "Installation verified successfully"
-    
-    # Display completion banner
-    echo -e "\n${GREEN}╔════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║             godEye Installation Complete                ║${NC}"
-    echo -e "${GREEN}╚════════════════════════════════════════════════════════╝${NC}"
-    
-    echo -e "\n${CYAN}Access your installation at:${NC} http://${ip_address}:${NGINX_PORT}"
-    echo -e "\n${CYAN}Complete the setup:${NC}"
-    echo -e "1. Visit the URL above"
-    echo -e "2. Create your administrator account"
-    echo -e "3. Make sure to use a strong password"
-    
-    echo -e "\n${CYAN}Useful Commands:${NC}"
-    echo -e "View API logs: ${NC}sudo journalctl -u godeye-api -f"
-    echo -e "View frontend logs: ${NC}sudo journalctl -u godeye-frontend -f"
-    echo -e "Restart services: ${NC}sudo systemctl restart godeye-api godeye-frontend"
-    
-    return 0
-}
-
-cleanup() {
-    local exit_code=$?
-    if [ $exit_code -ne 0 ]; then
-        log "ERROR" "Installation failed with exit code: $exit_code"
-        
-        # Stop any running services
-        local services=(godeye-api godeye-frontend nginx redis-server)
-        for service in "${services[@]}"; do
-            if systemctl is-active --quiet "$service"; then
-                log "INFO" "Stopping $service..."
-                systemctl stop "$service"
+            log "WARN" "Dependency installation attempt $i failed, retrying..."
+            sleep 5
+            if [ $i -eq 3 ]; then
+                log "ERROR" "Failed to install dependencies"
+                return 1
             fi
-        done
-        
-        # Log final error status
-        echo -e "\n${RED}Installation failed. Please check the logs:${NC}"
-        echo "Error log: $ERROR_LOG_FILE"
-        echo "Install log: $LOG_FILE"
+        fi
+    done
+
+    # Build the application
+    if su "$APP_USER" -c "npm run build"; then
+        log "SUCCESS" "Application built successfully"
+    else
+        log "ERROR" "Failed to build application"
+        return 1
     fi
 }
 
-main() {
-    # Register cleanup handler
-    trap cleanup EXIT
+configure_systemd() {
+    log "INFO" "Configuring systemd service..."
     
-    # Display welcome banner
-    echo -e "${CYAN}╔════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║                   godEye Installer                     ║${NC}"
-    echo -e "${CYAN}╚════════════════════════════════════════════════════════╝${NC}"
+    # Create systemd service file
+    cat > /etc/systemd/system/godeye.service << EOF
+[Unit]
+Description=godEye - PiVPN Management System
+After=network.target redis-server.service
+
+[Service]
+Type=forking
+User=$APP_USER
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PM2_HOME=/home/$APP_USER/.pm2
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$PM2_PATH start server.js --name godeye
+ExecReload=$PM2_PATH reload godeye
+ExecStop=$PM2_PATH stop godeye
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Reload systemd and enable service
+    systemctl daemon-reload
+    systemctl enable godeye.service
+    
+    log "SUCCESS" "Systemd service configured"
+}
+
+start_services() {
+    log "INFO" "Starting services..."
+    
+    # Start Redis if not running
+    if ! systemctl is-active --quiet redis-server; then
+        systemctl start redis-server
+    fi
+    
+    # Start godEye service
+    if systemctl start godeye; then
+        log "SUCCESS" "godEye service started successfully"
+    else
+        log "ERROR" "Failed to start godEye service"
+        return 1
+    fi
+}
+
+print_completion_message() {
+    echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}godEye Installation Complete!${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+    echo -e "Access the management interface at:"
+    echo -e "${BLUE}http://localhost:$NGINX_PORT${NC}"
+    echo -e "\nDefault ports:"
+    echo -e "Frontend: ${YELLOW}$FRONTEND_PORT${NC}"
+    echo -e "Backend:  ${YELLOW}$APP_PORT${NC}"
+    echo -e "Nginx:    ${YELLOW}$NGINX_PORT${NC}\n"
+    echo -e "Installation logs can be found at:"
+    echo -e "${YELLOW}$LOG_FILE${NC}"
+    echo -e "${YELLOW}$ERROR_LOG_FILE${NC}\n"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
+
+# Main installation flow
+main() {
+    echo -e "${CYAN}Starting godEye installation...${NC}\n"
     
     # Initialize logging
     init_logging
     
-    # Run installation steps with proper error handling
-    check_requirements || {
-        log "ERROR" "System requirements check failed"
-        exit 1
-    }
+    # Check system requirements
+    check_requirements
     
-    check_internet || {
-        log "ERROR" "Internet connectivity check failed"
-        exit 1
-    }
+    # Check internet connectivity
+    check_internet
     
-    install_dependencies || {
+    # Install dependencies
+    if ! install_dependencies; then
         log "ERROR" "Dependencies installation failed"
         exit 1
-    }
+    fi
     
-    setup_user || {
-        log "ERROR" "User setup failed"
+    # Setup environment
+    if ! setup_environment; then
+        log "ERROR" "Environment setup failed"
         exit 1
-    }
+    fi
     
-    setup_application || {
-        log "ERROR" "Application setup failed"
+    # Install global packages
+    if ! install_global_packages; then
+        log "ERROR" "Global packages installation failed"
         exit 1
-    }
+    fi
     
-    setup_services || {
-        log "ERROR" "Services setup failed"
+    # Clone repository
+    if ! clone_repository; then
+        log "ERROR" "Repository cloning failed"
         exit 1
-    }
+    fi
     
-    verify_installation || {
-        log "ERROR" "Installation verification failed"
+    # Setup environment variables
+    if ! setup_environment_variables; then
+        log "ERROR" "Environment variables setup failed"
         exit 1
-    }
+    fi
+    
+    # Install application
+    if ! install_application; then
+        log "ERROR" "Application installation failed"
+        exit 1
+    fi
+    
+    # Configure systemd
+    if ! configure_systemd; then
+        log "ERROR" "Systemd configuration failed"
+        exit 1
+    fi
+    
+    # Start services
+    if ! start_services; then
+        log "ERROR" "Service startup failed"
+        exit 1
+    fi
+    
+    # Print completion message
+    print_completion_message
 }
 
 # Start installation
