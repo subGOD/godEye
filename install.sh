@@ -289,7 +289,6 @@ install_dependencies() {
         log "ERROR" "Failed to fix package manager"
         return 1
     fi
-    }
 
     # Verify required commands
     local required_commands=(curl wget git nginx)
