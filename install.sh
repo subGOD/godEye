@@ -288,6 +288,7 @@ install_dependencies() {
     if ! fix_package_manager; then
         log "ERROR" "Failed to fix package manager"
         return 1
+    fi
     }
 
     # Verify required commands
