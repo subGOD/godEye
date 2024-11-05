@@ -289,7 +289,6 @@ install_dependencies() {
         log "ERROR" "Failed to fix package manager"
         return 1
     fi
-    	}
 
     # Verify required commands
     local required_commands=(curl wget git nginx)
@@ -319,6 +318,7 @@ install_dependencies() {
 
     DEBIAN_FRONTEND=noninteractive apt-get install -y --fix-missing "${PACKAGES[@]}" || {
         log "ERROR" "Failed to install prerequisites"
+        local error_msg
         error_msg=$(apt-get install -y "${PACKAGES[@]}" 2>&1)
         log "ERROR" "Installation error details: $error_msg"
         apt-get --fix-broken install -y
