@@ -39,6 +39,7 @@ APP_GROUP="godeye"
 APP_PORT="3001"
 FRONTEND_PORT="3000"
 NGINX_PORT="1337"
+NGINX_DEFAULT_PORT="8080"
 
 # Color definitions
 RED='\e[31m'
@@ -281,8 +282,63 @@ check_requirements() {
     log "SUCCESS" "System requirements verified"
 }
 
+check_existing_services() {
+    log "INFO" "Checking existing services..."
+    
+    # Check for PiHole
+    if command -v pihole &> /dev/null; then
+        log "INFO" "PiHole detected, configuring for compatibility..."
+        # Backup existing nginx configs if they exist
+        if [ -f /etc/nginx/sites-enabled/default ]; then
+            mv /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/default.backup
+        fi
+        
+        # Stop nginx if running
+        systemctl stop nginx 2>/dev/null || true
+        
+        # Remove existing nginx if installed
+        apt-get remove --purge nginx nginx-common nginx-full -y
+        apt-get autoremove -y
+    fi
+    
+    # Check for processes using port 80
+    if netstat -tuln | grep -q ":80 "; then
+        log "WARN" "Port 80 is in use. Will configure nginx to use alternate port."
+        NGINX_DEFAULT_PORT=8080
+    else
+        NGINX_DEFAULT_PORT=80
+    fi
+}
+
+fix_dependencies() {
+    log "INFO" "Fixing package dependencies..."
+    
+    # Update to latest packages
+    apt-get update
+    apt-get upgrade -y
+    
+    # Fix held packages
+    apt-mark unhold libgcc-8-dev libsdl2-2.0-0 || true
+    
+    # Force correct versions
+    apt-get install -y --fix-broken
+    apt-get install -y libc6-dev
+    
+    # Clean package manager state
+    apt-get clean
+    apt-get autoremove -y
+    dpkg --configure -a
+    apt-get install -f -y
+}
+
 install_dependencies() {
     log "INFO" "Installing dependencies..."
+    
+    # Check existing services first
+    check_existing_services
+    
+    # Fix package dependencies
+    fix_dependencies
     
     # Update package list with retry mechanism
     if ! fix_package_manager; then
@@ -483,10 +539,10 @@ setup_environment() {
 }
 EOF
 
-    # Setup nginx configuration with security headers
+# Setup nginx configuration with security headers
     cat > /etc/nginx/sites-available/godeye << EOF
 server {
-    listen $NGINX_PORT default_server;
+    listen ${NGINX_DEFAULT_PORT:-8080} default_server;
     server_name _;
     
     # Security headers
