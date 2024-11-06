@@ -202,23 +202,53 @@ install_core_dependencies() {
     echo "Installing minimal dependencies..."
     
     # Core packages only - minimal set
+    local CORE_PACKAGES=(install_core_dependencies() {
+    echo "Installing minimal dependencies..."
+    
+    # First update and fix any broken dependencies
+    apt-get update
+    apt-get -f install -y
+    
+    # Install packages one by one to better handle errors
     local CORE_PACKAGES=(
-        nginx-light
-        redis-server
-        curl
-        ufw
+        "nginx-light"
+        "redis-server"
+        "curl"
+        "ufw"
+        "git"  # Added git as it's needed for cloning the repository
     )
 
-    # Install without recommendations
-    apt-get install -y --no-install-recommends "${CORE_PACKAGES[@]}" || return 1
-    
-    # Verify critical packages
     for pkg in "${CORE_PACKAGES[@]}"; do
-        dpkg -l "$pkg" | grep -q '^ii' || {
-            echo -e "${RED}Failed to install $pkg${NC}"
-            return 1
-        }
+        echo "Installing $pkg..."
+        if ! dpkg -l | grep -q "^ii.*$pkg"; then
+            if ! apt-get install -y --no-install-recommends "$pkg"; then
+                # Try to fix broken dependencies and retry
+                apt-get -f install -y
+                if ! apt-get install -y --no-install-recommends "$pkg"; then
+                    echo -e "${RED}Failed to install $pkg${NC}"
+                    return 1
+                fi
+            fi
+        else
+            echo "$pkg is already installed"
+        fi
     done
+    
+    # Verify all required packages are installed
+    local missing_packages=()
+    for pkg in "${CORE_PACKAGES[@]}"; do
+        if ! dpkg -l | grep -q "^ii.*$pkg"; then
+            missing_packages+=("$pkg")
+        fi
+    done
+    
+    if [ ${#missing_packages[@]} -ne 0 ]; then
+        echo -e "${RED}Failed to install the following packages: ${missing_packages[*]}${NC}"
+        return 1
+    fi
+    
+    echo -e "${GREEN}All core dependencies installed successfully${NC}"
+    return 0
 }
 
 # Optimized Node.js installation
@@ -543,11 +573,54 @@ main() {
 
     # Step 2: Dependencies
     echo "Step 2/7: Installing dependencies..."
-    install_core_dependencies || {
-        echo -e "${RED}Failed to install core dependencies${NC}"
-        cleanup
-        exit 1
-    }
+    install_core_dependencies() {
+    echo "Installing minimal dependencies..."
+    
+    # First update and fix any broken dependencies
+    apt-get update
+    apt-get -f install -y
+    
+    # Install packages one by one to better handle errors
+    local CORE_PACKAGES=(
+        "nginx-light"
+        "redis-server"
+        "curl"
+        "ufw"
+        "git"  # Added git as it's needed for cloning the repository
+    )
+
+    for pkg in "${CORE_PACKAGES[@]}"; do
+        echo "Installing $pkg..."
+        if ! dpkg -l | grep -q "^ii.*$pkg"; then
+            if ! apt-get install -y --no-install-recommends "$pkg"; then
+                # Try to fix broken dependencies and retry
+                apt-get -f install -y
+                if ! apt-get install -y --no-install-recommends "$pkg"; then
+                    echo -e "${RED}Failed to install $pkg${NC}"
+                    return 1
+                fi
+            fi
+        else
+            echo "$pkg is already installed"
+        fi
+    done
+    
+    # Verify all required packages are installed
+    local missing_packages=()
+    for pkg in "${CORE_PACKAGES[@]}"; do
+        if ! dpkg -l | grep -q "^ii.*$pkg"; then
+            missing_packages+=("$pkg")
+        fi
+    done
+    
+    if [ ${#missing_packages[@]} -ne 0 ]; then
+        echo -e "${RED}Failed to install the following packages: ${missing_packages[*]}${NC}"
+        return 1
+    fi
+    
+    echo -e "${GREEN}All core dependencies installed successfully${NC}"
+    return 0
+	}
 
     # Step 3: Node.js
     echo "Step 3/7: Setting up Node.js..."
