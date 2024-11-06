@@ -519,7 +519,7 @@ print_status() {
 }
 
 # Main installation sequence
-mmain() {
+main() {
     # Print welcome message (header already shown)
     echo "Starting godEye installation..."
     export DEBIAN_FRONTEND=noninteractive
