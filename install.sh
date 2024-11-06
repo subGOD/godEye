@@ -519,7 +519,7 @@ print_status() {
 }
 
 # Main installation sequence
-main() {
+mmain() {
     # Print welcome message (header already shown)
     echo "Starting godEye installation..."
     export DEBIAN_FRONTEND=noninteractive
@@ -529,7 +529,6 @@ main() {
         echo -e "${RED}System requirements check failed. Please resolve the issues above and try again.${NC}"
         exit 1
     fi
-    }
 
     # Initialize installation
     mkdir -p "$INSTALL_DIR" || exit 1
