@@ -72,28 +72,103 @@ cleanup() {
 }
 
 # Minimal system checks
+# Minimal system checks with better error reporting
 check_system() {
-    # Check root
+    echo "Checking system requirements..."
+    local errors=0
+
+    # Check root with specific error
     [ "$EUID" -ne 0 ] && {
-        echo -e "${RED}Please run as root${NC}"
-        exit 1
+        echo -e "${RED}Error: Please run as root or with sudo${NC}"
+        return 1
     }
 
-    # Check RAM
-    local mem_available
+    # Check architecture with specific error
+    local arch=$(dpkg --print-architecture)
+    if [[ ! "$arch" =~ ^(arm64|armhf)$ ]]; then
+        echo -e "${RED}Error: Unsupported architecture: $arch${NC}"
+        echo "This script supports Raspberry Pi architectures (arm64/armhf) only"
+        return 1
+    }
+
+    # Check RAM with detailed reporting
+    local total_ram mem_available
+    total_ram=$(free -m | awk '/^Mem:/{print $2}')
     mem_available=$(free -m | awk '/^Mem:/{print $7}')
-    [ "$mem_available" -lt 512 ] && {
-        echo -e "${RED}Insufficient memory (need 512MB free)${NC}"
-        exit 1
+    
+    echo "Memory check:"
+    echo "  Total RAM: ${total_ram}MB"
+    echo "  Available: ${mem_available}MB"
+    
+    if [ "$mem_available" -lt 512 ]; then
+        echo -e "${RED}Error: Insufficient memory${NC}"
+        echo "Required: 512MB free memory"
+        echo "Available: ${mem_available}MB"
+        ((errors++))
+    fi
+
+    # Check disk space with detailed reporting
+    local install_space data_space root_space
+    install_space=$(df -m "$INSTALL_DIR" | awk 'NR==2 {print $4}')
+    data_space=$(df -m "$DATA_DIR" | awk 'NR==2 {print $4}')
+    root_space=$(df -m / | awk 'NR==2 {print $4}')
+
+    echo "Disk space check:"
+    echo "  Install directory space: ${install_space}MB"
+    echo "  Data directory space: ${data_space}MB"
+    echo "  Root partition space: ${root_space}MB"
+
+    if [ "$install_space" -lt 1024 ]; then
+        echo -e "${RED}Error: Insufficient space in $INSTALL_DIR${NC}"
+        echo "Required: 1024MB"
+        echo "Available: ${install_space}MB"
+        ((errors++))
+    fi
+
+    if [ "$data_space" -lt 512 ]; then
+        echo -e "${RED}Error: Insufficient space in $DATA_DIR${NC}"
+        echo "Required: 512MB"
+        echo "Available: ${data_space}MB"
+        ((errors++))
+    fi
+
+    # Check for required commands
+    echo "Checking required commands..."
+    local required_commands=(curl wget systemctl)
+    for cmd in "${required_commands[@]}"; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            echo -e "${RED}Error: Required command '$cmd' not found${NC}"
+            ((errors++))
+        else
+            echo "  $cmd: Found"
+        fi
+    done
+
+    # Check if ports are available
+    echo "Checking port availability..."
+    for port in $APP_PORT $FRONTEND_PORT $NGINX_PORT; do
+        if netstat -tuln | grep -q ":$port "; then
+            echo -e "${RED}Error: Port $port is already in use${NC}"
+            ((errors++))
+        else
+            echo "  Port $port: Available"
+        fi
+    done
+
+    # Create directories if they don't exist
+    mkdir -p "$INSTALL_DIR" "$DATA_DIR" || {
+        echo -e "${RED}Error: Failed to create required directories${NC}"
+        ((errors++))
     }
 
-    # Check disk
-    local space_available
-    space_available=$(df -m "$INSTALL_DIR" | awk 'NR==2 {print $4}')
-    [ "$space_available" -lt 1024 ] && {
-        echo -e "${RED}Insufficient disk space (need 1GB free)${NC}"
-        exit 1
-    }
+    # Final check
+    if [ $errors -gt 0 ]; then
+        echo -e "\n${RED}Found $errors system requirement issue(s)${NC}"
+        return 1
+    fi
+
+    echo -e "${GREEN}System requirements verified successfully${NC}"
+    return 0
 }
 
 # Optimized package management
@@ -449,10 +524,11 @@ main() {
     echo "Starting godEye installation..."
     export DEBIAN_FRONTEND=noninteractive
 
-    # Pre-installation checks
-    check_system || {
-        echo -e "${RED}System requirements not met${NC}"
+    # Pre-installation checks with better error handling
+    if ! check_system; then
+        echo -e "${RED}System requirements check failed. Please resolve the issues above and try again.${NC}"
         exit 1
+    fi
     }
 
     # Initialize installation
