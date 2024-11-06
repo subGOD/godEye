@@ -89,7 +89,7 @@ check_system() {
         echo -e "${RED}Error: Unsupported architecture: $arch${NC}"
         echo "This script supports Raspberry Pi architectures (arm64/armhf) only"
         return 1
-    }
+    fi
 
     # Check RAM with detailed reporting
     local total_ram mem_available
