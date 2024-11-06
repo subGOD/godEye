@@ -382,7 +382,7 @@ EOF
 
     systemctl restart fail2ban
     
-    # Node.js installation with fallback methods
+# Node.js installation with fallback methods
     if ! command -v node &> /dev/null; then
         log "INFO" "Installing Node.js..."
         
@@ -455,7 +455,7 @@ setup_environment() {
         # Set secure permissions on user home
         chmod 750 "/home/$APP_USER"
     fi
-
+    
     # Create and set permissions for directories
     mkdir -p "$INSTALL_DIR"
     mkdir -p /var/log/godeye
@@ -958,3 +958,82 @@ print_completion_message() {
     
     echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 }
+
+# Main execution sequence
+main() {
+    # Initialize logging first
+    init_logging || {
+        log "ERROR" "Failed to initialize logging"
+        exit 1
+    }
+    
+    log "INFO" "Starting installation..."
+    
+    # Check basic requirements
+    check_requirements || {
+        log "ERROR" "System requirements check failed"
+        exit 1
+    }
+
+    # Check internet connectivity
+    check_internet || {
+        log "ERROR" "Internet connectivity check failed"
+        exit 1
+    }
+
+    # Run installation steps in sequence
+    install_dependencies || {
+        log "ERROR" "Failed to install dependencies"
+        cleanup
+        exit 1
+    }
+
+    setup_environment || {
+        log "ERROR" "Failed to setup environment"
+        cleanup
+        exit 1
+    }
+
+    install_global_packages || {
+        log "ERROR" "Failed to install global packages"
+        cleanup
+        exit 1
+    }
+
+    clone_repository || {
+        log "ERROR" "Failed to clone repository"
+        cleanup
+        exit 1
+    }
+
+    setup_environment_variables || {
+        log "ERROR" "Failed to setup environment variables"
+        cleanup
+        exit 1
+    }
+
+    install_application || {
+        log "ERROR" "Failed to install application"
+        cleanup
+        exit 1
+    }
+
+    configure_systemd || {
+        log "ERROR" "Failed to configure systemd"
+        cleanup
+        exit 1
+    }
+
+    start_services || {
+        log "ERROR" "Failed to start services"
+        cleanup
+        exit 1
+    }
+
+    print_completion_message
+    
+    log "SUCCESS" "Installation completed successfully"
+}
+
+# Execute main function
+main "$@"
