@@ -200,15 +200,25 @@ fix_package_manager() {
 install_core_dependencies() {
     echo "Installing minimal dependencies..."
     
-    # First update and fix any broken dependencies
-    apt-get update
-    apt-get upgrade -y  # Add this to update existing packages
-    apt-get -f install -y
+    # Force clean the package manager state
+    rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock*
+    dpkg --configure -a
+    apt-get clean
     
-    # Fix for held packages
-    apt-mark showhold | xargs -r apt-mark unhold
+    # Update package lists with multiple retries
+    for i in {1..3}; do
+        if apt-get update -y; then
+            break
+        fi
+        echo "Retry $i updating package lists..."
+        sleep 5
+    done
+
+    # Upgrade system packages first
+    apt-get -y -f install
+    apt-get -y --fix-broken install
     
-    # Install packages one by one to better handle errors
+    # Install packages individually with error handling
     local CORE_PACKAGES=(
         "nginx-light"
         "redis-server"
@@ -217,22 +227,22 @@ install_core_dependencies() {
         "git"
     )
 
-    # Try to resolve dependencies first
-    apt-get install -y -f
-    
     for pkg in "${CORE_PACKAGES[@]}"; do
         echo "Installing $pkg..."
         if ! dpkg -l | grep -q "^ii.*$pkg"; then
-            # First attempt: try to install normally
-            if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg"; then
-                # Second attempt: try to fix broken deps and retry
+            # Try different installation methods
+            if ! apt-get install -y --no-install-recommends "$pkg"; then
+                echo "Retrying installation of $pkg with fix-broken..."
                 apt-get -f install -y
-                dpkg --configure -a
-                apt-get update
-                if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg"; then
-                    # Third attempt: try with --fix-missing
-                    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --fix-missing --no-install-recommends "$pkg"; then
-                        echo -e "${RED}Failed to install $pkg${NC}"
+                if ! apt-get install -y --fix-missing --no-install-recommends "$pkg"; then
+                    echo "Failed to install $pkg using standard methods. Attempting alternative repository..."
+                    # Add Debian backports if not already added
+                    if ! grep -q "deb http://deb.debian.org/debian bullseye-backports main" /etc/apt/sources.list; then
+                        echo "deb http://deb.debian.org/debian bullseye-backports main" >> /etc/apt/sources.list
+                        apt-get update
+                    fi
+                    if ! apt-get install -y -t bullseye-backports "$pkg"; then
+                        echo -e "${RED}Failed to install $pkg after all attempts${NC}"
                         return 1
                     fi
                 fi
@@ -240,20 +250,13 @@ install_core_dependencies() {
         else
             echo "$pkg is already installed"
         fi
-    done
-    
-    # Final verification
-    local missing_packages=()
-    for pkg in "${CORE_PACKAGES[@]}"; do
+        
+        # Verify installation
         if ! dpkg -l | grep -q "^ii.*$pkg"; then
-            missing_packages+=("$pkg")
+            echo -e "${RED}Failed to verify installation of $pkg${NC}"
+            return 1
         fi
     done
-    
-    if [ ${#missing_packages[@]} -ne 0 ]; then
-        echo -e "${RED}Failed to install the following packages: ${missing_packages[*]}${NC}"
-        return 1
-    fi
     
     echo -e "${GREEN}All core dependencies installed successfully${NC}"
     return 0
