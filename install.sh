@@ -71,8 +71,7 @@ cleanup() {
     rm -f /etc/nginx/sites-*/godeye
 }
 
-# Minimal system checks
-# Minimal system checks with better error reporting
+# System requirements check
 check_system() {
     echo "Checking system requirements..."
     local errors=0
@@ -171,7 +170,7 @@ check_system() {
     return 0
 }
 
-# Optimized package management
+# Package manager optimization
 fix_package_manager() {
     echo "Optimizing package manager..."
     export DEBIAN_FRONTEND=noninteractive
@@ -197,12 +196,8 @@ fix_package_manager() {
     return 1
 }
 
-# Minimal dependency installation
+# Core dependency installation
 install_core_dependencies() {
-    echo "Installing minimal dependencies..."
-    
-    # Core packages only - minimal set
-    local CORE_PACKAGES=(install_core_dependencies() {
     echo "Installing minimal dependencies..."
     
     # First update and fix any broken dependencies
@@ -215,7 +210,7 @@ install_core_dependencies() {
         "redis-server"
         "curl"
         "ufw"
-        "git"  # Added git as it's needed for cloning the repository
+        "git"
     )
 
     for pkg in "${CORE_PACKAGES[@]}"; do
@@ -251,7 +246,7 @@ install_core_dependencies() {
     return 0
 }
 
-# Optimized Node.js installation
+# Node.js installation
 install_nodejs() {
     echo "Installing Node.js..."
     
@@ -272,7 +267,7 @@ install_nodejs() {
     fi
 }
 
-# PiHole compatibility setup
+# PiHole compatibility configuration
 configure_pihole_compatibility() {
     echo "Checking PiHole compatibility..."
     
@@ -294,7 +289,7 @@ configure_pihole_compatibility() {
     fi
 }
 
-# Optimized Redis setup
+# Redis setup
 configure_redis() {
     echo "Configuring Redis..."
     
@@ -330,7 +325,7 @@ EOF
     chmod 600 "$INSTALL_DIR/.redis_password"
 }
 
-# Basic security setup
+# Security configuration
 setup_security() {
     echo "Configuring basic security..."
     
@@ -380,7 +375,7 @@ setup_environment() {
     chmod 750 "$INSTALL_DIR" "$DATA_DIR"
 }
 
-# Optimized nginx configuration
+# Nginx configuration
 configure_nginx() {
     echo "Configuring nginx..."
     
@@ -427,7 +422,7 @@ EOF
     nginx -t || return 1
 }
 
-# Optimized application installation
+# Application installation
 install_application() {
     echo "Installing godEye application..."
     
@@ -531,7 +526,59 @@ start_services() {
     done
 }
 
-# Installation status
+# Helper function for progress indication
+show_progress() {
+    local pid=$1
+    local delay=0.1
+    local spinstr='|/-\'
+    while ps -p $pid > /dev/null; do
+        local temp=${spinstr#?}
+        printf " [%c]  " "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\b\b\b\b\b\b"
+    done
+    printf "    \b\b\b\b"
+}
+
+# Command success verification
+check_command() {
+    if [ $1 -eq 0 ]; then
+        echo -e "${GREEN}✓${NC}"
+    else
+        echo -e "${RED}✗${NC}"
+        return 1
+    fi
+}
+
+# Installation verification
+verify_installation() {
+    local errors=0
+    
+    # Check services
+    echo -n "Checking Redis... "
+    systemctl is-active --quiet redis-server && echo -e "${GREEN}✓${NC}" || { echo -e "${RED}✗${NC}"; ((errors++)); }
+    
+    echo -n "Checking nginx... "
+    systemctl is-active --quiet nginx && echo -e "${GREEN}✓${NC}" || { echo -e "${RED}✗${NC}"; ((errors++)); }
+    
+    echo -n "Checking godEye... "
+    systemctl is-active --quiet godeye && echo -e "${GREEN}✓${NC}" || { echo -e "${RED}✗${NC}"; ((errors++)); }
+    
+    # Check ports
+    for port in $APP_PORT $FRONTEND_PORT $NGINX_PORT; do
+        echo -n "Checking port $port... "
+        timeout 1 bash -c ">/dev/tcp/localhost/$port" 2>/dev/null && echo -e "${GREEN}✓${NC}" || { echo -e "${RED}✗${NC}"; ((errors++)); }
+    done
+    
+    # Check files
+    echo -n "Checking installation files... "
+    [ -f "$INSTALL_DIR/server.js" ] && [ -f "$INSTALL_DIR/.env" ] && echo -e "${GREEN}✓${NC}" || { echo -e "${RED}✗${NC}"; ((errors++)); }
+    
+    return $errors
+}
+
+# Installation status display
 print_status() {
     local ip_address
     ip_address=$(hostname -I | awk '{print $1}')
@@ -573,54 +620,11 @@ main() {
 
     # Step 2: Dependencies
     echo "Step 2/7: Installing dependencies..."
-    install_core_dependencies() {
-    echo "Installing minimal dependencies..."
-    
-    # First update and fix any broken dependencies
-    apt-get update
-    apt-get -f install -y
-    
-    # Install packages one by one to better handle errors
-    local CORE_PACKAGES=(
-        "nginx-light"
-        "redis-server"
-        "curl"
-        "ufw"
-        "git"  # Added git as it's needed for cloning the repository
-    )
-
-    for pkg in "${CORE_PACKAGES[@]}"; do
-        echo "Installing $pkg..."
-        if ! dpkg -l | grep -q "^ii.*$pkg"; then
-            if ! apt-get install -y --no-install-recommends "$pkg"; then
-                # Try to fix broken dependencies and retry
-                apt-get -f install -y
-                if ! apt-get install -y --no-install-recommends "$pkg"; then
-                    echo -e "${RED}Failed to install $pkg${NC}"
-                    return 1
-                fi
-            fi
-        else
-            echo "$pkg is already installed"
-        fi
-    done
-    
-    # Verify all required packages are installed
-    local missing_packages=()
-    for pkg in "${CORE_PACKAGES[@]}"; do
-        if ! dpkg -l | grep -q "^ii.*$pkg"; then
-            missing_packages+=("$pkg")
-        fi
-    done
-    
-    if [ ${#missing_packages[@]} -ne 0 ]; then
-        echo -e "${RED}Failed to install the following packages: ${missing_packages[*]}${NC}"
-        return 1
-    fi
-    
-    echo -e "${GREEN}All core dependencies installed successfully${NC}"
-    return 0
-	}
+    install_core_dependencies || {
+        echo -e "${RED}Failed to install core dependencies${NC}"
+        cleanup
+        exit 1
+    }
 
     # Step 3: Node.js
     echo "Step 3/7: Setting up Node.js..."
@@ -682,56 +686,25 @@ main() {
     print_status
 }
 
-# Helper function for progress
-show_progress() {
-    local pid=$1
-    local delay=0.1
-    local spinstr='|/-\'
-    while ps -p $pid > /dev/null; do
-        local temp=${spinstr#?}
-        printf " [%c]  " "$spinstr"
-        local spinstr=$temp${spinstr%"$temp"}
-        sleep $delay
-        printf "\b\b\b\b\b\b"
-    done
-    printf "    \b\b\b\b"
+# Function to write runtime configuration
+write_runtime_config() {
+    cat > "$INSTALL_DIR/runtime.json" << EOF
+{
+    "version": "1.0.0",
+    "installDate": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+    "ports": {
+        "app": $APP_PORT,
+        "frontend": $FRONTEND_PORT,
+        "nginx": $NGINX_PORT
+    },
+    "paths": {
+        "install": "$INSTALL_DIR",
+        "data": "$DATA_DIR"
+    }
 }
-
-# Function to check if command succeeded
-check_command() {
-    if [ $1 -eq 0 ]; then
-        echo -e "${GREEN}✓${NC}"
-    else
-        echo -e "${RED}✗${NC}"
-        return 1
-    fi
-}
-
-# Verification function
-verify_installation() {
-    local errors=0
-    
-    # Check services
-    echo -n "Checking Redis... "
-    systemctl is-active --quiet redis-server && echo -e "${GREEN}✓${NC}" || { echo -e "${RED}✗${NC}"; ((errors++)); }
-    
-    echo -n "Checking nginx... "
-    systemctl is-active --quiet nginx && echo -e "${GREEN}✓${NC}" || { echo -e "${RED}✗${NC}"; ((errors++)); }
-    
-    echo -n "Checking godEye... "
-    systemctl is-active --quiet godeye && echo -e "${GREEN}✓${NC}" || { echo -e "${RED}✗${NC}"; ((errors++)); }
-    
-    # Check ports
-    for port in $APP_PORT $FRONTEND_PORT $NGINX_PORT; do
-        echo -n "Checking port $port... "
-        timeout 1 bash -c ">/dev/tcp/localhost/$port" 2>/dev/null && echo -e "${GREEN}✓${NC}" || { echo -e "${RED}✗${NC}"; ((errors++)); }
-    done
-    
-    # Check files
-    echo -n "Checking installation files... "
-    [ -f "$INSTALL_DIR/server.js" ] && [ -f "$INSTALL_DIR/.env" ] && echo -e "${GREEN}✓${NC}" || { echo -e "${RED}✗${NC}"; ((errors++)); }
-    
-    return $errors
+EOF
+    chmod 640 "$INSTALL_DIR/runtime.json"
+    chown "$APP_USER:$APP_GROUP" "$INSTALL_DIR/runtime.json"
 }
 
 # Function to handle upgrades
@@ -755,27 +728,6 @@ handle_upgrade() {
     fi
 }
 
-# Function to write runtime configuration
-write_runtime_config() {
-    cat > "$INSTALL_DIR/runtime.json" << EOF
-{
-    "version": "1.0.0",
-    "installDate": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-    "ports": {
-        "app": $APP_PORT,
-        "frontend": $FRONTEND_PORT,
-        "nginx": $NGINX_PORT
-    },
-    "paths": {
-        "install": "$INSTALL_DIR",
-        "data": "$DATA_DIR"
-    }
-}
-EOF
-    chmod 640 "$INSTALL_DIR/runtime.json"
-    chown "$APP_USER:$APP_GROUP" "$INSTALL_DIR/runtime.json"
-}
-
 # Add final confirmation before starting
 confirm_installation() {
     echo -e "\nReady to install godEye with the following configuration:"
@@ -789,7 +741,7 @@ confirm_installation() {
     [[ ! "$response" =~ ^[Nn]$ ]] || exit 0
 }
 
-# Execute main function with error handling
+# Main execution
 if [ "$EUID" -ne 0 ]; then 
     echo -e "${RED}Please run as root${NC}"
     exit 1
