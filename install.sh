@@ -202,7 +202,11 @@ install_core_dependencies() {
     
     # First update and fix any broken dependencies
     apt-get update
+    apt-get upgrade -y  # Add this to update existing packages
     apt-get -f install -y
+    
+    # Fix for held packages
+    apt-mark showhold | xargs -r apt-mark unhold
     
     # Install packages one by one to better handle errors
     local CORE_PACKAGES=(
@@ -213,15 +217,24 @@ install_core_dependencies() {
         "git"
     )
 
+    # Try to resolve dependencies first
+    apt-get install -y -f
+    
     for pkg in "${CORE_PACKAGES[@]}"; do
         echo "Installing $pkg..."
         if ! dpkg -l | grep -q "^ii.*$pkg"; then
-            if ! apt-get install -y --no-install-recommends "$pkg"; then
-                # Try to fix broken dependencies and retry
+            # First attempt: try to install normally
+            if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg"; then
+                # Second attempt: try to fix broken deps and retry
                 apt-get -f install -y
-                if ! apt-get install -y --no-install-recommends "$pkg"; then
-                    echo -e "${RED}Failed to install $pkg${NC}"
-                    return 1
+                dpkg --configure -a
+                apt-get update
+                if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg"; then
+                    # Third attempt: try with --fix-missing
+                    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --fix-missing --no-install-recommends "$pkg"; then
+                        echo -e "${RED}Failed to install $pkg${NC}"
+                        return 1
+                    fi
                 fi
             fi
         else
@@ -229,7 +242,7 @@ install_core_dependencies() {
         fi
     done
     
-    # Verify all required packages are installed
+    # Final verification
     local missing_packages=()
     for pkg in "${CORE_PACKAGES[@]}"; do
         if ! dpkg -l | grep -q "^ii.*$pkg"; then
