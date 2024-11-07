@@ -196,7 +196,7 @@ fix_package_manager() {
     return 1
 }
 
-# Core dependency installation
+# Core dependency installation with better verification
 install_core_dependencies() {
     echo "Installing minimal dependencies..."
     
@@ -227,36 +227,95 @@ install_core_dependencies() {
         "git"
     )
 
+    local install_errors=0
+    
     for pkg in "${CORE_PACKAGES[@]}"; do
-        echo "Installing $pkg..."
-        if ! dpkg -l | grep -q "^ii.*$pkg"; then
-            # Try different installation methods
-            if ! apt-get install -y --no-install-recommends "$pkg"; then
-                echo "Retrying installation of $pkg with fix-broken..."
-                apt-get -f install -y
-                if ! apt-get install -y --fix-missing --no-install-recommends "$pkg"; then
-                    echo "Failed to install $pkg using standard methods. Attempting alternative repository..."
-                    # Add Debian backports if not already added
-                    if ! grep -q "deb http://deb.debian.org/debian bullseye-backports main" /etc/apt/sources.list; then
-                        echo "deb http://deb.debian.org/debian bullseye-backports main" >> /etc/apt/sources.list
-                        apt-get update
-                    fi
-                    if ! apt-get install -y -t bullseye-backports "$pkg"; then
-                        echo -e "${RED}Failed to install $pkg after all attempts${NC}"
-                        return 1
-                    fi
-                fi
-            fi
-        else
+        echo "Processing $pkg..."
+        
+        # Check if package is already installed and working
+        if dpkg -l | grep -q "^ii.*$pkg"; then
             echo "$pkg is already installed"
+            
+            # Verify the package's functionality
+            case $pkg in
+                "nginx-light")
+                    # Test nginx installation
+                    if nginx -v 2>/dev/null; then
+                        echo "$pkg is working correctly"
+                        continue
+                    fi
+                    ;;
+                "redis-server")
+                    # Test redis installation
+                    if systemctl is-active redis-server >/dev/null 2>&1; then
+                        echo "$pkg is working correctly"
+                        continue
+                    fi
+                    ;;
+                "curl")
+                    # Test curl installation
+                    if curl --version >/dev/null 2>&1; then
+                        echo "$pkg is working correctly"
+                        continue
+                    fi
+                    ;;
+                "ufw")
+                    # Test ufw installation
+                    if ufw version >/dev/null 2>&1; then
+                        echo "$pkg is working correctly"
+                        continue
+                    fi
+                    ;;
+                "git")
+                    # Test git installation
+                    if git --version >/dev/null 2>&1; then
+                        echo "$pkg is working correctly"
+                        continue
+                    fi
+                    ;;
+            esac
         fi
         
-        # Verify installation
+        echo "Installing/Reinstalling $pkg..."
+        
+        # Remove package first if it exists but isn't working
+        apt-get remove -y "$pkg" >/dev/null 2>&1 || true
+        apt-get autoremove -y >/dev/null 2>&1 || true
+        
+        # Try installation with different methods
+        if ! apt-get install -y --no-install-recommends "$pkg"; then
+            echo "Retrying installation of $pkg with fix-broken..."
+            apt-get -f install -y
+            apt-get update
+            if ! apt-get install -y --fix-missing --no-install-recommends "$pkg"; then
+                echo "Failed to install $pkg using standard methods. Attempting alternative repository..."
+                # Add Debian backports if not already added
+                if ! grep -q "deb http://deb.debian.org/debian bullseye-backports main" /etc/apt/sources.list; then
+                    echo "deb http://deb.debian.org/debian bullseye-backports main" >> /etc/apt/sources.list
+                    apt-get update
+                fi
+                if ! apt-get install -y -t bullseye-backports "$pkg"; then
+                    echo -e "${RED}Failed to install $pkg after all attempts${NC}"
+                    ((install_errors++))
+                    continue
+                fi
+            fi
+        fi
+        
+        # Verify installation again
         if ! dpkg -l | grep -q "^ii.*$pkg"; then
             echo -e "${RED}Failed to verify installation of $pkg${NC}"
-            return 1
+            ((install_errors++))
+            continue
         fi
+        
+        echo -e "${GREEN}Successfully installed $pkg${NC}"
     done
+    
+    if [ $install_errors -gt 0 ]; then
+        echo -e "${RED}Failed to install/verify $install_errors package(s)${NC}"
+        return 1
+    fi
     
     echo -e "${GREEN}All core dependencies installed successfully${NC}"
     return 0
