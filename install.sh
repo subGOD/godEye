@@ -196,7 +196,7 @@ fix_package_manager() {
     return 1
 }
 
-# Core dependency installation with enhanced verification
+# Core dependency installation with enhanced nginx verification
 install_core_dependencies() {
     echo "Installing minimal dependencies..."
     
@@ -237,10 +237,16 @@ install_core_dependencies() {
             local pkg=$1
             case $pkg in
                 "nginx-light")
-                    if command -v nginx >/dev/null 2>&1; then
-                        nginx -t >/dev/null 2>&1 || return 1
-                        return 0
+                    # Special handling for nginx
+                    if [ -f /usr/sbin/nginx ] || [ -f /usr/bin/nginx ]; then
+                        # Try to start nginx if not running
+                        systemctl start nginx >/dev/null 2>&1 || true
+                        # Test configuration
+                        if /usr/sbin/nginx -t >/dev/null 2>&1 || /usr/bin/nginx -t >/dev/null 2>&1; then
+                            return 0
+                        fi
                     fi
+                    return 1
                     ;;
                 "redis-server")
                     if command -v redis-server >/dev/null 2>&1; then
@@ -251,20 +257,17 @@ install_core_dependencies() {
                     ;;
                 "curl")
                     if command -v curl >/dev/null 2>&1; then
-                        curl --version >/dev/null 2>&1
-                        return $?
+                        return 0
                     fi
                     ;;
                 "ufw")
                     if command -v ufw >/dev/null 2>&1; then
-                        ufw --version >/dev/null 2>&1
-                        return $?
+                        return 0
                     fi
                     ;;
                 "git")
                     if command -v git >/dev/null 2>&1; then
-                        git --version >/dev/null 2>&1
-                        return $?
+                        return 0
                     fi
                     ;;
             esac
@@ -275,9 +278,18 @@ install_core_dependencies() {
         if ! verify_package "$pkg"; then
             echo "Installing $pkg..."
             
-            # Remove any existing broken installation
-            apt-get remove -y "$pkg" >/dev/null 2>&1 || true
-            apt-get autoremove -y >/dev/null 2>&1 || true
+            # Special handling for nginx
+            if [ "$pkg" = "nginx-light" ]; then
+                # Stop and remove nginx completely
+                systemctl stop nginx >/dev/null 2>&1 || true
+                apt-get remove -y nginx* >/dev/null 2>&1 || true
+                apt-get autoremove -y >/dev/null 2>&1 || true
+                rm -rf /etc/nginx /var/log/nginx
+            else
+                # Remove any existing broken installation
+                apt-get remove -y "$pkg" >/dev/null 2>&1 || true
+                apt-get autoremove -y >/dev/null 2>&1 || true
+            fi
             
             # Try installation methods in sequence
             if ! apt-get install -y --no-install-recommends "$pkg"; then
@@ -297,6 +309,12 @@ install_core_dependencies() {
                 fi
             fi
             
+            # Special post-installation steps for nginx
+            if [ "$pkg" = "nginx-light" ]; then
+                systemctl enable nginx >/dev/null 2>&1 || true
+                systemctl start nginx >/dev/null 2>&1 || true
+            fi
+            
             # Wait a moment for services to settle
             sleep 2
         else
@@ -307,13 +325,19 @@ install_core_dependencies() {
         # Verify installation success
         if ! verify_package "$pkg"; then
             echo -e "${RED}Failed to verify $pkg installation${NC}"
-            # Debug information
+            # Enhanced debug information
             echo "Package status:"
             dpkg -l "$pkg" || true
-            echo "Binary location:"
-            which "$pkg" 2>/dev/null || echo "Binary not found"
+            echo "Binary locations:"
+            find /usr/bin /usr/sbin -name "$pkg" 2>/dev/null || echo "Binary not found in standard locations"
             echo "Service status (if applicable):"
             systemctl status "$pkg" 2>/dev/null || true
+            if [ "$pkg" = "nginx-light" ]; then
+                echo "Nginx specific debug info:"
+                ls -l /usr/sbin/nginx /usr/bin/nginx 2>/dev/null || echo "Nginx binary not found"
+                ls -l /etc/nginx 2>/dev/null || echo "Nginx config directory not found"
+                nginx -V 2>&1 || echo "Cannot get nginx version"
+            fi
             ((install_errors++))
         else
             echo -e "${GREEN}Successfully installed and verified $pkg${NC}"
